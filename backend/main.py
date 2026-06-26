@@ -123,7 +123,7 @@ def _seed_if_empty():
         next_monday = _next_weekday(0)
 
         s.add(CareRecipient(
-            first_name="Martine",
+            first_name="Agnès",
             reassurance_message="Tu es en sécurité. Gaëtan s'occupe de toi.",
         ))
         s.add(Household(

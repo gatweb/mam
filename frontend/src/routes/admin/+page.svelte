@@ -627,7 +627,7 @@
 	{#if activeTab === 'photos'}
 		<section class="card">
 			<h2>Ajouter des photos</h2>
-			<p class="hint">Les photos défilent en diaporama sur l'écran de Martine. Vous pouvez en ajouter plusieurs à la fois.</p>
+			<p class="hint">Les photos défilent en diaporama sur l'écran de Agnès. Vous pouvez en ajouter plusieurs à la fois.</p>
 			<label class="photo-drop-zone" class:uploading={uploadingPhotos}>
 				{#if uploadingPhotos}
 					<span>Envoi en cours…</span>
@@ -654,7 +654,7 @@
 									<input
 										type="text"
 										bind:value={editingCaption}
-										placeholder="Légende (ex: Gaëtan et Martine, Noël 2023)"
+										placeholder="Légende (ex: Gaëtan et Agnès, Noël 2023)"
 										onkeydown={(e) => { if (e.key === 'Enter') saveCaption(photo.id); if (e.key === 'Escape') editingCaptionId = null; }}
 										style="margin-bottom:0.4rem"
 									/>
@@ -753,7 +753,7 @@
 
 		<section class="card">
 			<h2>🏠 Home Assistant</h2>
-			<p class="hint">Affichez la température, la présence ou n'importe quel capteur HA sur l'écran de Martine.</p>
+			<p class="hint">Affichez la température, la présence ou n'importe quel capteur HA sur l'écran de Agnès.</p>
 
 			<label class="field-label">URL de votre instance HA</label>
 			<input type="url" bind:value={settings.ha_url} placeholder="http://192.168.0.100:8123" />
@@ -866,7 +866,7 @@
 
 		<section class="card danger-zone">
 			<h2>Données de démonstration</h2>
-			<p class="hint">Recharge les exemples de départ (Martine, Gaëtan, Sophie, événements et questions types). Les données actuelles seront effacées.</p>
+			<p class="hint">Recharge les exemples de départ (Agnès, Gaëtan, Sophie, événements et questions types). Les données actuelles seront effacées.</p>
 			<button class="btn-danger" onclick={resetSeed}>↺ Remettre les données de démo</button>
 		</section>
 	{/if}

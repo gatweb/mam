@@ -75,7 +75,7 @@ class Settings(SQLModel, table=True):
     # Rappel quotidien aidant
     daily_reminder_enabled: bool = False
     daily_reminder_time: str = "09:00"  # HH:MM
-    daily_reminder_message: str = "N'oubliez pas de mettre à jour le message du jour pour Martine."
+    daily_reminder_message: str = "N'oubliez pas de mettre à jour le message du jour pour Agnès."
     # Mode nuit
     night_start: str = "21:30"
     night_end: str = "07:00"

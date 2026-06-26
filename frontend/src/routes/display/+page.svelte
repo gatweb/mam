@@ -272,7 +272,7 @@
 			<span class="video-caller">📞 {videoCall.personName ? `Appel de ${videoCall.personName}` : 'Appel vidéo'}</span>
 		</div>
 		<iframe
-			src="https://meet.jit.si/{videoCall.room}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startWithAudioMuted=false&userInfo.displayName=Martine"
+			src="https://meet.jit.si/{videoCall.room}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startWithAudioMuted=false&userInfo.displayName=Agnès"
 			allow="camera; microphone; display-capture; autoplay"
 			title="Appel vidéo"
 		></iframe>

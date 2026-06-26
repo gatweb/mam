@@ -2,7 +2,7 @@
 
 **Écran d'orientation et de réassurance pour les personnes accompagnées (Alzheimer, troubles cognitifs)**
 
-> Né d'un besoin réel, partagé librement. Pour Martine, et pour tous ceux qui traversent les mêmes nuits.
+> Né d'un besoin réel, partagé librement. Pour Agnès, et pour tous ceux qui traversent les mêmes nuits.
 
 Snoozolène est une application web **locale, open source et sans abonnement** qui transforme une vieille tablette ou un écran branché à un PC en compagnon visuel rassurant pour votre proche. L'aidant la contrôle depuis son téléphone ou PC via un panneau d'administration simple.
 
@@ -139,7 +139,7 @@ EndSection
 
 ### Premier démarrage
 
-Des données de démonstration sont créées automatiquement (Martine, Gaëtan, Sophie, événements et questions types). Vous pouvez les remplacer depuis **Admin → Maison → Remettre les données de démo**.
+Des données de démonstration sont créées automatiquement (Agnès, Gaëtan, Sophie, événements et questions types). Vous pouvez les remplacer depuis **Admin → Maison → Remettre les données de démo**.
 
 ### Panneau d'administration
 
@@ -176,7 +176,7 @@ Dans **Admin → Alertes → Home Assistant** :
 ### Appels vidéo
 
 Dans **Admin → Proches**, activer le bouton 🎥 pour chaque proche autorisé.  
-Un clic sur 📞 lance un appel Jitsi Meet : l'écran de Martine bascule automatiquement en plein écran vidéo. Elle n'a rien à faire.
+Un clic sur 📞 lance un appel Jitsi Meet : l'écran de Agnès bascule automatiquement en plein écran vidéo. Elle n'a rien à faire.
 
 ---
 
@@ -213,7 +213,7 @@ Il est possible d'ajouter un assistant vocal qui répond aux questions de votre 
 - [Whisper.cpp](https://github.com/ggerganov/whisper.cpp) pour la transcription vocale
 - Un micro USB dans la chambre
 
-L'idée : Martine dit "Où est Gaëtan ?" → Whisper transcrit → Ollama génère une réponse depuis les données Snoozolène → synthèse vocale (piper-tts) → réponse audio.
+L'idée : Agnès dit "Où est Gaëtan ?" → Whisper transcrit → Ollama génère une réponse depuis les données Snoozolène → synthèse vocale (piper-tts) → réponse audio.
 
 Cette fonctionnalité est sur la roadmap. Les contributions sont bienvenues !
 
@@ -251,4 +251,4 @@ MIT — libre d'utilisation, de modification et de redistribution.
 
 ---
 
-*Fait avec ❤️ pour Martine, et pour tous ceux qui accompagnent leurs proches au quotidien.*
+*Fait avec ❤️ pour Agnès, et pour tous ceux qui accompagnent leurs proches au quotidien.*
