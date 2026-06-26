@@ -59,6 +59,17 @@
 		ws?.close();
 	});
 
+	function _formatHaState(state: string, entityId: string): string {
+		if (entityId.startsWith('device_tracker.')) {
+			return state === 'home' ? 'À la maison' : 'Absent';
+		}
+		if (state === 'on') return 'Ouvert';
+		if (state === 'off') return 'Fermé';
+		const n = parseFloat(state);
+		if (!isNaN(n)) return n % 1 === 0 ? String(n) : n.toFixed(1);
+		return state;
+	}
+
 	const isNight = $derived(moment === 'nuit');
 	const isSundown = $derived(moment === 'soir');
 	const currentFaq = $derived($displayState?.faqs?.[faqIndex] ?? null);
@@ -126,6 +137,19 @@
 						</li>
 					{/each}
 				</ul>
+			</section>
+		{/if}
+
+		<!-- Capteurs Home Assistant -->
+		{#if $displayState?.ha_states?.length}
+			<section class="ha-block">
+				{#each $displayState.ha_states as sensor}
+					<div class="ha-sensor">
+						<span class="ha-icon">{sensor.icon}</span>
+						<span class="ha-value">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
+						<span class="ha-label">{sensor.label}</span>
+					</div>
+				{/each}
 			</section>
 		{/if}
 
@@ -263,6 +287,37 @@
 
 	.events-block .event::before { content: '• '; color: #ffd700; }
 	.events-block .event.active { color: #ffd700; font-weight: 600; }
+
+	.ha-block {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 1rem;
+	}
+
+	.ha-sensor {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		background: rgba(255,255,255,0.07);
+		border-radius: 0.75rem;
+		padding: 0.6rem 1.2rem;
+		min-width: 100px;
+	}
+
+	.ha-icon { font-size: clamp(1.4rem, 2.5vw, 2rem); }
+
+	.ha-value {
+		font-size: clamp(1.4rem, 3vw, 2.4rem);
+		font-weight: 700;
+		color: #ffd700;
+		line-height: 1.1;
+	}
+
+	.ha-label {
+		font-size: clamp(0.8rem, 1.5vw, 1.2rem);
+		color: #a0c4ff;
+		margin-top: 0.2rem;
+	}
 
 	.faq-block {
 		text-align: center;

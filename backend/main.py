@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from PIL import Image
 
 from database import get_session, init_db, engine
-from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent
+from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity
 from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
 
 MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
@@ -224,8 +224,31 @@ def _get_events_for_date(session: Session, d: date) -> list[Event]:
 
 # ── Display ────────────────────────────────────────────────────────────────────
 
+async def _fetch_ha_states(settings: Settings, entities: list[HAEntity]) -> list[dict]:
+    headers = {"Authorization": f"Bearer {settings.ha_token}"}
+    base = settings.ha_url.rstrip("/")
+    results = []
+    async with httpx.AsyncClient(timeout=5) as client:
+        for ent in entities:
+            try:
+                r = await client.get(f"{base}/api/states/{ent.entity_id}", headers=headers)
+                if r.status_code == 200:
+                    data = r.json()
+                    state = data.get("state", "")
+                    results.append({
+                        "entity_id": ent.entity_id,
+                        "label": ent.label,
+                        "icon": ent.icon,
+                        "unit": ent.unit,
+                        "state": state,
+                    })
+            except Exception:
+                pass
+    return results
+
+
 @app.get("/api/display")
-def get_display_state(session: Session = Depends(get_session)):
+async def get_display_state(session: Session = Depends(get_session)):
     recipient = session.exec(select(CareRecipient)).first()
     household = session.exec(select(Household)).first()
     people = session.exec(select(Person)).all()
@@ -236,6 +259,11 @@ def get_display_state(session: Session = Depends(get_session)):
     ).first()
     settings = session.exec(select(Settings)).first() or Settings()
 
+    ha_entities = session.exec(select(HAEntity).order_by(HAEntity.display_order)).all()
+    ha_states = []
+    if ha_entities and settings.ha_url and settings.ha_token:
+        ha_states = await _fetch_ha_states(settings, ha_entities)
+
     return {
         "recipient": recipient.model_dump() if recipient else None,
         "household": household.model_dump() if household else None,
@@ -245,6 +273,7 @@ def get_display_state(session: Session = Depends(get_session)):
         "daily_message": daily_msg.model_dump() if daily_msg else None,
         "night_start": settings.night_start,
         "night_end": settings.night_end,
+        "ha_states": ha_states,
         "server_time": datetime.now().isoformat(),
     }
 
@@ -469,6 +498,88 @@ async def delete_person(person_id: int, session: Session = Depends(get_session))
     session.commit()
     await _broadcast({"type": "refresh"})
     return {"ok": True}
+
+
+# ── Home Assistant ────────────────────────────────────────────────────────────
+
+@app.get("/api/ha/entities")
+def list_ha_entities(session: Session = Depends(get_session)):
+    return session.exec(select(HAEntity).order_by(HAEntity.display_order)).all()
+
+
+@app.post("/api/ha/entities")
+async def create_ha_entity(data: dict, session: Session = Depends(get_session)):
+    ent = HAEntity(**{k: v for k, v in data.items() if hasattr(HAEntity, k)})
+    session.add(ent)
+    session.commit()
+    session.refresh(ent)
+    await _broadcast({"type": "refresh"})
+    return ent
+
+
+@app.delete("/api/ha/entities/{entity_id}")
+async def delete_ha_entity(entity_id: int, session: Session = Depends(get_session)):
+    ent = session.get(HAEntity, entity_id)
+    if not ent:
+        raise HTTPException(status_code=404)
+    session.delete(ent)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True}
+
+
+@app.post("/api/ha/test")
+async def test_ha_connection(session: Session = Depends(get_session)):
+    s = session.exec(select(Settings)).first() or Settings()
+    if not s.ha_url or not s.ha_token:
+        raise HTTPException(status_code=400, detail="URL et token Home Assistant requis.")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{s.ha_url.rstrip('/')}/api/",
+                headers={"Authorization": f"Bearer {s.ha_token}"},
+            )
+            if r.status_code == 200:
+                return {"ok": True, "message": r.json().get("message", "Connecté")}
+            raise HTTPException(status_code=400, detail=f"HA a répondu {r.status_code}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Connexion impossible : {e}")
+
+
+@app.get("/api/ha/search")
+async def search_ha_entities(q: str = "", session: Session = Depends(get_session)):
+    """Recherche d'entités HA par entity_id ou friendly_name."""
+    s = session.exec(select(Settings)).first() or Settings()
+    if not s.ha_url or not s.ha_token:
+        raise HTTPException(status_code=400, detail="HA non configuré.")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{s.ha_url.rstrip('/')}/api/states",
+                headers={"Authorization": f"Bearer {s.ha_token}"},
+            )
+            if r.status_code != 200:
+                raise HTTPException(status_code=400, detail="Impossible de lister les entités.")
+            all_states = r.json()
+            q_lower = q.lower()
+            filtered = [
+                {
+                    "entity_id": s["entity_id"],
+                    "friendly_name": s.get("attributes", {}).get("friendly_name", ""),
+                    "state": s["state"],
+                    "unit": s.get("attributes", {}).get("unit_of_measurement", ""),
+                }
+                for s in all_states
+                if not q_lower or q_lower in s["entity_id"].lower()
+                   or q_lower in s.get("attributes", {}).get("friendly_name", "").lower()
+            ]
+            return filtered[:50]
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # ── Appel vidéo ───────────────────────────────────────────────────────────────

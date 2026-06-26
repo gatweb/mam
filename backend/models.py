@@ -79,6 +79,19 @@ class Settings(SQLModel, table=True):
     # Mode nuit
     night_start: str = "21:30"
     night_end: str = "07:00"
+    # Home Assistant
+    ha_url: str = ""
+    ha_token: str = ""
+
+
+class HAEntity(SQLModel, table=True):
+    """Entité Home Assistant à afficher sur l'écran."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    entity_id: str          # ex: sensor.temperature_salon
+    label: str              # ex: Température salon
+    icon: str = "🌡️"        # emoji affiché
+    unit: str = ""          # ex: °C, %, km/h
+    display_order: int = 0
 
 
 class ScreenEvent(SQLModel, table=True):

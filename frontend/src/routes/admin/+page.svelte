@@ -39,25 +39,35 @@
 		daily_reminder_message: '',
 		night_start: '21:30',
 		night_end: '07:00',
+		ha_url: '',
+		ha_token: '',
 	});
 	let testingNotif = $state(false);
+	let testingHa = $state(false);
+	let haEntities = $state<Array<{ id: number; entity_id: string; label: string; icon: string; unit: string }>>([]);
+	let newHaEntity = $state({ entity_id: '', label: '', icon: '🌡️', unit: '' });
+	let haSearch = $state('');
+	let haSearchResults = $state<Array<{ entity_id: string; friendly_name: string; state: string; unit: string }>>([]);
+	let haSearching = $state(false);
 
 	let toast = $state('');
 	let activeTab = $state('message');
 
 	async function load() {
-		const [h, f, e, p, st] = await Promise.all([
+		const [h, f, e, p, st, ha] = await Promise.all([
 			fetch(`${API}/api/household`).then(r => r.json()),
 			fetch(`${API}/api/faqs`).then(r => r.json()),
 			fetch(`${API}/api/events`).then(r => r.json()),
 			fetch(`${API}/api/people`).then(r => r.json()),
 			fetch(`${API}/api/settings`).then(r => r.json()),
+			fetch(`${API}/api/ha/entities`).then(r => r.json()),
 		]);
 		household = h || household;
 		faqs = f;
 		events = e;
 		people = p;
 		if (st) settings = { ...settings, ...st };
+		haEntities = ha;
 	}
 
 	async function saveSettings() {
@@ -67,6 +77,64 @@
 			body: JSON.stringify(settings),
 		});
 		showToast('Paramètres enregistrés ✓');
+	}
+
+	async function testHaConnection() {
+		testingHa = true;
+		try {
+			const res = await fetch(`${API}/api/ha/test`, { method: 'POST' });
+			if (res.ok) showToast('Home Assistant connecté ✓');
+			else {
+				const err = await res.json();
+				showToast(`Échec : ${err.detail}`);
+			}
+		} finally {
+			testingHa = false;
+		}
+	}
+
+	async function searchHaEntities() {
+		if (!haSearch.trim()) return;
+		haSearching = true;
+		try {
+			const res = await fetch(`${API}/api/ha/search?q=${encodeURIComponent(haSearch)}`);
+			haSearchResults = res.ok ? await res.json() : [];
+		} finally {
+			haSearching = false;
+		}
+	}
+
+	function pickHaEntity(result: typeof haSearchResults[0]) {
+		newHaEntity.entity_id = result.entity_id;
+		newHaEntity.label = result.friendly_name || result.entity_id;
+		newHaEntity.unit = result.unit;
+		// icône auto selon domaine
+		const domain = result.entity_id.split('.')[0];
+		const icons: Record<string, string> = {
+			sensor: '📊', weather: '🌤️', binary_sensor: '🔵',
+			device_tracker: '📍', climate: '🌡️', light: '💡',
+			switch: '🔌', camera: '📷', cover: '🪟',
+		};
+		newHaEntity.icon = icons[domain] ?? '📊';
+		haSearchResults = [];
+		haSearch = '';
+	}
+
+	async function addHaEntity() {
+		if (!newHaEntity.entity_id.trim()) return;
+		await fetch(`${API}/api/ha/entities`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ ...newHaEntity, display_order: haEntities.length }),
+		});
+		newHaEntity = { entity_id: '', label: '', icon: '🌡️', unit: '' };
+		await load();
+		showToast('Entité ajoutée ✓');
+	}
+
+	async function deleteHaEntity(id: number) {
+		await fetch(`${API}/api/ha/entities/${id}`, { method: 'DELETE' });
+		await load();
 	}
 
 	async function testNotification() {
@@ -587,6 +655,89 @@
 			</div>
 			<button class="primary" onclick={saveSettings}>Enregistrer tout</button>
 		</section>
+
+		<section class="card">
+			<h2>🏠 Home Assistant</h2>
+			<p class="hint">Affichez la température, la présence ou n'importe quel capteur HA sur l'écran de Martine.</p>
+
+			<label class="field-label">URL de votre instance HA</label>
+			<input type="url" bind:value={settings.ha_url} placeholder="http://192.168.0.100:8123" />
+
+			<label class="field-label">Long-Lived Access Token</label>
+			<input type="password" bind:value={settings.ha_token} placeholder="Profil HA → Sécurité → Tokens d'accès longue durée" />
+
+			<div class="ha-btn-row">
+				<button class="primary" onclick={saveSettings} style="flex:1">Enregistrer</button>
+				<button
+					class="btn-test"
+					onclick={testHaConnection}
+					disabled={!settings.ha_url || !settings.ha_token || testingHa}
+					style="flex:1"
+				>{testingHa ? 'Test…' : '🔗 Tester la connexion'}</button>
+			</div>
+		</section>
+
+		<section class="card">
+			<h2>Capteurs affichés sur l'écran</h2>
+
+			<!-- Recherche d'entités -->
+			<label class="field-label">Rechercher une entité HA</label>
+			<div class="row">
+				<input
+					type="text"
+					bind:value={haSearch}
+					placeholder="ex: temperature, gaetan, salon…"
+					onkeydown={(e) => e.key === 'Enter' && searchHaEntities()}
+				/>
+				<button class="btn-search" onclick={searchHaEntities} disabled={haSearching || !settings.ha_url}>
+					{haSearching ? '…' : '🔍'}
+				</button>
+			</div>
+
+			{#if haSearchResults.length > 0}
+				<ul class="ha-results">
+					{#each haSearchResults as result}
+						<li onclick={() => pickHaEntity(result)} class="ha-result-item">
+							<span class="ha-entity-id">{result.entity_id}</span>
+							{#if result.friendly_name}
+								<span class="ha-friendly">{result.friendly_name}</span>
+							{/if}
+							<span class="ha-state-preview">{result.state}{result.unit}</span>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+
+			<!-- Formulaire d'ajout manuel ou après sélection -->
+			<div class="ha-add-form">
+				<div class="row">
+					<input type="text" bind:value={newHaEntity.entity_id} placeholder="entity_id (ex: sensor.temp_salon)" style="flex:3" />
+					<input type="text" bind:value={newHaEntity.icon} placeholder="🌡️" style="flex:0.5; text-align:center" />
+				</div>
+				<div class="row">
+					<input type="text" bind:value={newHaEntity.label} placeholder="Libellé (ex: Salon)" style="flex:3" />
+					<input type="text" bind:value={newHaEntity.unit} placeholder="°C" style="flex:0.8" />
+				</div>
+				<button class="primary" onclick={addHaEntity} disabled={!newHaEntity.entity_id.trim()}>Ajouter à l'écran</button>
+			</div>
+
+			<!-- Liste des entités configurées -->
+			{#if haEntities.length > 0}
+				<ul class="list" style="margin-top:0.75rem">
+					{#each haEntities as ent}
+						<li>
+							<div>
+								<strong>{ent.icon} {ent.label}</strong>
+								<div class="event-meta">{ent.entity_id}{ent.unit ? ` · ${ent.unit}` : ''}</div>
+							</div>
+							<button class="del" onclick={() => deleteHaEntity(ent.id)}>✕</button>
+						</li>
+					{/each}
+				</ul>
+			{:else}
+				<p class="empty">Aucun capteur configuré.</p>
+			{/if}
+		</section>
 	{/if}
 
 	{#if activeTab === 'maison'}
@@ -989,6 +1140,51 @@
 	}
 	.toggle input:checked + .slider { background: #1a6e1a; }
 	.toggle input:checked + .slider::before { transform: translateX(22px); }
+
+	/* ── Home Assistant ──────────────────────────────────── */
+	.ha-btn-row { display: flex; gap: 0.5rem; margin-bottom: 0; }
+	.ha-btn-row .primary, .ha-btn-row .btn-test { margin-bottom: 0; }
+
+	.btn-search {
+		padding: 0.75rem 1rem;
+		background: #f0f0f0;
+		border: 2px solid #ddd;
+		border-radius: 0.5rem;
+		cursor: pointer;
+		font-size: 1.1rem;
+		flex-shrink: 0;
+	}
+
+	.btn-search:disabled { opacity: 0.4; cursor: not-allowed; }
+
+	.ha-results {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 0.75rem;
+		border: 1px solid #e0e0e0;
+		border-radius: 0.5rem;
+		max-height: 220px;
+		overflow-y: auto;
+	}
+
+	.ha-result-item {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		padding: 0.5rem 0.75rem;
+		cursor: pointer;
+		border-bottom: 1px solid #f0f0f0;
+		flex-wrap: wrap;
+	}
+
+	.ha-result-item:hover { background: #f5f8ff; }
+	.ha-result-item:last-child { border-bottom: none; }
+
+	.ha-entity-id { font-size: 0.8rem; color: #888; font-family: monospace; }
+	.ha-friendly { font-weight: 600; font-size: 0.95rem; }
+	.ha-state-preview { margin-left: auto; font-size: 0.85rem; color: #1a4eb3; font-weight: 600; }
+
+	.ha-add-form { margin-top: 0.5rem; }
 
 	.toast {
 		position: fixed;
