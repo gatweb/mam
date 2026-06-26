@@ -5,7 +5,7 @@
 	let household = $state({ display_name: '', reassurance_message: '' });
 	let faqs = $state<Array<{ id: number; question: string; answer: string }>>([]);
 	let events = $state<Array<{ id: number; title: string; event_date: string; event_time: string | null; recurrence: string | null; recurrence_end: string | null; message_before: string | null }>>([]);
-	let people = $state<Array<{ id: number; first_name: string; relation: string; message: string | null; next_visit: string | null; photo_path: string | null; is_primary_caregiver: boolean }>>([]);
+	let people = $state<Array<{ id: number; first_name: string; relation: string; message: string | null; next_visit: string | null; photo_path: string | null; is_primary_caregiver: boolean; allow_video_call: boolean }>>([]);
 
 	let quickMsg = $state({ content: '', author: 'Gaëtan' });
 	const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -27,7 +27,8 @@
 
 	let newEvent = $state({ title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' });
 	let newFaq = $state({ question: '', answer: '' });
-	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false });
+	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false, allow_video_call: false });
+	let callingPersonId = $state<number | null>(null);
 
 	let settings = $state({
 		ntfy_url: 'https://ntfy.sh',
@@ -193,6 +194,31 @@
 	async function deletePerson(id: number) {
 		await fetch(`${API}/api/people/${id}`, { method: 'DELETE' });
 		await load();
+	}
+
+	async function toggleVideoCall(person: typeof people[0]) {
+		await fetch(`${API}/api/people/${person.id}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ allow_video_call: !person.allow_video_call }),
+		});
+		await load();
+	}
+
+	async function startVideoCall(personId: number) {
+		callingPersonId = personId;
+		try {
+			const res = await fetch(`${API}/api/video-call/start`, {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ person_id: personId }),
+			});
+			const { url } = await res.json();
+			window.open(url, '_blank');
+			showToast('Appel lancé — Jitsi ouvert dans un nouvel onglet');
+		} finally {
+			callingPersonId = null;
+		}
 	}
 
 	async function resetSeed() {
@@ -398,6 +424,10 @@
 				<input type="checkbox" bind:checked={newPerson.is_primary_caregiver} />
 				Aidant principal (affiché en premier sur l'écran)
 			</label>
+			<label class="checkbox">
+				<input type="checkbox" bind:checked={newPerson.allow_video_call} />
+				Autoriser les appels vidéo depuis l'admin
+			</label>
 
 			<!-- Sélection photo -->
 			<label class="field-label">Photo (optionnel — peut être ajoutée après)</label>
@@ -445,6 +475,22 @@
 
 							<!-- Actions -->
 							<div class="person-actions">
+								{#if person.allow_video_call}
+									<button
+										class="call-btn"
+										onclick={() => startVideoCall(person.id)}
+										disabled={callingPersonId === person.id}
+										title="Lancer un appel vidéo"
+									>
+										{callingPersonId === person.id ? '…' : '📞'}
+									</button>
+								{/if}
+								<button
+									class="video-toggle"
+									class:active={person.allow_video_call}
+									onclick={() => toggleVideoCall(person)}
+									title={person.allow_video_call ? 'Désactiver les appels vidéo' : 'Activer les appels vidéo'}
+								>🎥</button>
 								<label class="photo-btn" title="Changer la photo">
 									📷
 									<input
@@ -825,6 +871,37 @@
 		border-radius: 0.4rem;
 		cursor: pointer;
 		font-size: 1rem;
+	}
+
+	.call-btn {
+		background: #e8f5e9;
+		border: 2px solid #2e7d32;
+		color: #2e7d32;
+		padding: 0.4rem 0.7rem;
+		border-radius: 0.4rem;
+		cursor: pointer;
+		font-size: 1rem;
+		font-weight: 700;
+	}
+
+	.call-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+	.video-toggle {
+		background: #f5f5f5;
+		border: 1px solid #ddd;
+		color: #888;
+		padding: 0.4rem 0.6rem;
+		border-radius: 0.4rem;
+		cursor: pointer;
+		font-size: 1rem;
+		opacity: 0.5;
+	}
+
+	.video-toggle.active {
+		background: #e3f2fd;
+		border-color: #1565c0;
+		color: #1565c0;
+		opacity: 1;
 	}
 
 	/* ── Zone danger ──────────────────────────────────────── */

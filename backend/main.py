@@ -1,4 +1,5 @@
 import os
+import uuid
 import asyncio
 from datetime import datetime, date
 from contextlib import asynccontextmanager
@@ -467,6 +468,27 @@ async def delete_person(person_id: int, session: Session = Depends(get_session))
     session.delete(person)
     session.commit()
     await _broadcast({"type": "refresh"})
+    return {"ok": True}
+
+
+# ── Appel vidéo ───────────────────────────────────────────────────────────────
+
+@app.post("/api/video-call/start")
+async def start_video_call(data: dict, session: Session = Depends(get_session)):
+    person_id = data.get("person_id")
+    person = session.get(Person, person_id) if person_id else None
+    room = f"snoozolene-{uuid.uuid4().hex[:12]}"
+    await _broadcast({
+        "type": "video_call",
+        "room": room,
+        "person_name": person.first_name if person else None,
+    })
+    return {"room": room, "url": f"https://meet.jit.si/{room}"}
+
+
+@app.post("/api/video-call/end")
+async def end_video_call():
+    await _broadcast({"type": "video_call_end"})
     return {"ok": True}
 
 

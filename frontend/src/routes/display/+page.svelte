@@ -10,6 +10,7 @@
 		$displayState?.night_end ?? '07:00'
 	));
 	let faqIndex = $state(0);
+	let videoCall = $state<{ room: string; personName: string | null } | null>(null);
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
@@ -31,6 +32,8 @@
 		ws.onmessage = (e) => {
 			const msg = JSON.parse(e.data);
 			if (msg.type === 'refresh') fetchState();
+			if (msg.type === 'video_call') videoCall = { room: msg.room, personName: msg.person_name ?? null };
+			if (msg.type === 'video_call_end') videoCall = null;
 		};
 		ws.onclose = () => setTimeout(connectWs, 3000);
 	}
@@ -151,6 +154,23 @@
 	{/if}
 
 </main>
+
+{#if videoCall}
+	<div class="video-overlay">
+		<div class="video-header">
+			{#if videoCall.personName}
+				<span class="video-caller">📞 Appel de {videoCall.personName}</span>
+			{:else}
+				<span class="video-caller">📞 Appel vidéo</span>
+			{/if}
+		</div>
+		<iframe
+			src="https://meet.jit.si/{videoCall.room}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startWithAudioMuted=false&userInfo.displayName=Martine"
+			allow="camera; microphone; display-capture; autoplay"
+			title="Appel vidéo"
+		></iframe>
+	</div>
+{/if}
 
 <style>
 	:global(body) {
@@ -297,5 +317,33 @@
 		font-size: clamp(2rem, 5vw, 4rem);
 		margin: 0.5rem 0;
 		color: #d0d0ff;
+	}
+
+	.video-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 100;
+		background: #000;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.video-header {
+		padding: 0.75rem 1.5rem;
+		background: #1a1a2e;
+		display: flex;
+		align-items: center;
+	}
+
+	.video-caller {
+		font-size: 1.4rem;
+		font-weight: 700;
+		color: #ffd700;
+	}
+
+	.video-overlay iframe {
+		flex: 1;
+		border: none;
+		width: 100%;
 	}
 </style>
