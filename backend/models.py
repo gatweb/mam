@@ -1,4 +1,4 @@
-from datetime import datetime, time
+from datetime import datetime
 from typing import Optional
 from sqlmodel import SQLModel, Field
 
@@ -63,3 +63,26 @@ class DailyMessage(SQLModel, table=True):
     author: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.utcnow)
     expires_at: Optional[datetime] = None
+
+
+class Settings(SQLModel, table=True):
+    """Configuration globale de l'instance."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    # ntfy
+    ntfy_url: str = "https://ntfy.sh"
+    ntfy_topic: str = ""
+    ntfy_token: Optional[str] = None  # pour topics privés
+    # Rappel quotidien aidant
+    daily_reminder_enabled: bool = False
+    daily_reminder_time: str = "09:00"  # HH:MM
+    daily_reminder_message: str = "N'oubliez pas de mettre à jour le message du jour pour Martine."
+    # Mode nuit
+    night_start: str = "21:30"
+    night_end: str = "07:00"
+
+
+class ScreenEvent(SQLModel, table=True):
+    """Journal de connexion/déconnexion de l'écran patient."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    event: str  # "connected" | "disconnected"
+    occurred_at: datetime = Field(default_factory=datetime.utcnow)

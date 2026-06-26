@@ -29,20 +29,54 @@
 	let newFaq = $state({ question: '', answer: '' });
 	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false });
 
+	let settings = $state({
+		ntfy_url: 'https://ntfy.sh',
+		ntfy_topic: '',
+		ntfy_token: '',
+		daily_reminder_enabled: false,
+		daily_reminder_time: '09:00',
+		daily_reminder_message: '',
+		night_start: '21:30',
+		night_end: '07:00',
+	});
+	let testingNotif = $state(false);
+
 	let toast = $state('');
 	let activeTab = $state('message');
 
 	async function load() {
-		const [h, f, e, p] = await Promise.all([
+		const [h, f, e, p, st] = await Promise.all([
 			fetch(`${API}/api/household`).then(r => r.json()),
 			fetch(`${API}/api/faqs`).then(r => r.json()),
 			fetch(`${API}/api/events`).then(r => r.json()),
 			fetch(`${API}/api/people`).then(r => r.json()),
+			fetch(`${API}/api/settings`).then(r => r.json()),
 		]);
 		household = h || household;
 		faqs = f;
 		events = e;
 		people = p;
+		if (st) settings = { ...settings, ...st };
+	}
+
+	async function saveSettings() {
+		await fetch(`${API}/api/settings`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(settings),
+		});
+		showToast('Paramètres enregistrés ✓');
+	}
+
+	async function testNotification() {
+		testingNotif = true;
+		try {
+			const res = await fetch(`${API}/api/settings/test-notification`, { method: 'POST' });
+			if (res.ok) showToast('Notification envoyée ✓ — vérifiez votre téléphone');
+			else showToast('Échec — vérifiez le topic ntfy');
+		} finally {
+			testingNotif = false;
+		}
 	}
 
 	function showToast(msg: string) {
@@ -184,13 +218,8 @@
 	</header>
 
 	<nav class="tabs">
-		{#each ['message', 'agenda', 'faq', 'proches', 'maison'] as tab}
-			<button class:active={activeTab === tab} onclick={() => activeTab = tab}>
-				{tab === 'message' ? '✉️ Message' :
-				 tab === 'agenda' ? '📅 Agenda' :
-				 tab === 'faq' ? '💬 Questions' :
-				 tab === 'proches' ? '👨‍👩‍👧 Proches' : '🏠 Maison'}
-			</button>
+		{#each [['message','✉️ Message'], ['agenda','📅 Agenda'], ['faq','💬 Questions'], ['proches','👨‍👩‍👧 Proches'], ['notifs','🔔 Alertes'], ['maison','🏠 Maison']] as [tab, label]}
+			<button class:active={activeTab === tab} onclick={() => activeTab = tab}>{label}</button>
 		{/each}
 	</nav>
 
@@ -436,6 +465,81 @@
 					{/each}
 				</ul>
 			{/if}
+		</section>
+	{/if}
+
+	{#if activeTab === 'notifs'}
+		<section class="card">
+			<h2>Notifications sur votre téléphone</h2>
+			<p class="hint">
+				Utilisez <strong>ntfy</strong> pour recevoir des alertes push gratuitement.
+				Installez l'app <em>ntfy</em> sur votre téléphone, créez un topic unique (ex: <code>snoozolene-gaetan-2026</code>) et copiez-le ici.
+			</p>
+
+			<label class="field-label">URL du serveur ntfy</label>
+			<input type="url" bind:value={settings.ntfy_url} placeholder="https://ntfy.sh" />
+
+			<label class="field-label">Topic (identifiant unique de votre canal)</label>
+			<input type="text" bind:value={settings.ntfy_topic} placeholder="ex: snoozolene-gaetan-2026" />
+
+			<label class="field-label">Token d'accès (optionnel — pour topic privé)</label>
+			<input type="password" bind:value={settings.ntfy_token} placeholder="Laisser vide si topic public" />
+
+			<button
+				class="btn-test"
+				onclick={testNotification}
+				disabled={!settings.ntfy_topic || testingNotif}
+			>
+				{testingNotif ? 'Envoi…' : '🔔 Envoyer une notification test'}
+			</button>
+		</section>
+
+		<section class="card">
+			<h2>Alertes automatiques</h2>
+
+			<div class="setting-row">
+				<div>
+					<strong>Écran déconnecté</strong>
+					<p class="hint">Alerte si l'écran patient se déconnecte plus de 60 secondes.</p>
+				</div>
+				<span class="badge-auto">Automatique</span>
+			</div>
+
+			<hr />
+
+			<div class="setting-row">
+				<div>
+					<strong>Rappel quotidien aidant</strong>
+					<p class="hint">Un rappel sur votre téléphone pour penser à mettre à jour le message du jour.</p>
+				</div>
+				<label class="toggle">
+					<input type="checkbox" bind:checked={settings.daily_reminder_enabled} />
+					<span class="slider"></span>
+				</label>
+			</div>
+
+			{#if settings.daily_reminder_enabled}
+				<label class="field-label">Heure du rappel</label>
+				<input type="time" bind:value={settings.daily_reminder_time} />
+				<label class="field-label">Message du rappel</label>
+				<input type="text" bind:value={settings.daily_reminder_message} placeholder="N'oubliez pas de mettre à jour le message du jour." />
+			{/if}
+		</section>
+
+		<section class="card">
+			<h2>Heures du mode nuit</h2>
+			<p class="hint">En mode nuit, l'écran n'affiche que l'heure et un message rassurant très simple.</p>
+			<div class="row">
+				<div>
+					<label class="field-label">Début de nuit</label>
+					<input type="time" bind:value={settings.night_start} />
+				</div>
+				<div>
+					<label class="field-label">Fin de nuit (réveil)</label>
+					<input type="time" bind:value={settings.night_end} />
+				</div>
+			</div>
+			<button class="primary" onclick={saveSettings}>Enregistrer tout</button>
 		</section>
 	{/if}
 
@@ -740,6 +844,74 @@
 	}
 
 	.btn-danger:hover { background: #fee; }
+
+	/* ── Notifications ────────────────────────────────────── */
+	code {
+		background: #f0f0f0;
+		padding: 0.1rem 0.4rem;
+		border-radius: 0.3rem;
+		font-size: 0.85rem;
+	}
+
+	.btn-test {
+		width: 100%;
+		padding: 0.9rem;
+		background: #e8f4e8;
+		color: #1a6e1a;
+		border: 2px solid #1a6e1a;
+		border-radius: 0.5rem;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+		margin-top: 0.25rem;
+	}
+
+	.btn-test:disabled { opacity: 0.5; cursor: not-allowed; }
+	.btn-test:hover:not(:disabled) { background: #d0ecd0; }
+
+	.setting-row {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.5rem 0;
+	}
+
+	.setting-row p { margin: 0.2rem 0 0; }
+
+	.badge-auto {
+		background: #e8f0fe;
+		color: #1a4eb3;
+		font-size: 0.78rem;
+		font-weight: 600;
+		padding: 0.2rem 0.6rem;
+		border-radius: 1rem;
+		white-space: nowrap;
+	}
+
+	hr { border: none; border-top: 1px solid #eee; margin: 0.75rem 0; }
+
+	/* Toggle switch */
+	.toggle { position: relative; display: inline-block; width: 48px; height: 26px; flex-shrink: 0; }
+	.toggle input { opacity: 0; width: 0; height: 0; }
+	.slider {
+		position: absolute; inset: 0;
+		background: #ccc;
+		border-radius: 26px;
+		cursor: pointer;
+		transition: background 0.2s;
+	}
+	.slider::before {
+		content: '';
+		position: absolute;
+		width: 20px; height: 20px;
+		left: 3px; top: 3px;
+		background: white;
+		border-radius: 50%;
+		transition: transform 0.2s;
+	}
+	.toggle input:checked + .slider { background: #1a6e1a; }
+	.toggle input:checked + .slider::before { transform: translateX(22px); }
 
 	.toast {
 		position: fixed;

@@ -3,16 +3,21 @@ import asyncio
 from datetime import datetime, date
 from contextlib import asynccontextmanager
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import Session, select
 from PIL import Image
 
-from database import get_session, init_db
-from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage
+from database import get_session, init_db, engine
+from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent
+from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
 
 MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
+
+scheduler = AsyncIOScheduler()
 
 
 @asynccontextmanager
@@ -21,7 +26,10 @@ async def lifespan(app: FastAPI):
     os.makedirs(f"{MEDIA_DIR}/videos", exist_ok=True)
     init_db()
     _seed_if_empty()
+    _setup_scheduler()
+    scheduler.start()
     yield
+    scheduler.shutdown()
 
 
 app = FastAPI(title="Snoozolène API", lifespan=lifespan)
@@ -35,26 +43,79 @@ app.add_middleware(
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
-_ws_clients: list[WebSocket] = []
+# ── WebSocket pool + état écran ────────────────────────────────────────────────
+
+_ws_clients: set[WebSocket] = set()
+_screen_online = False
+_screen_disconnect_task: asyncio.Task | None = None
 
 
 async def _broadcast(data: dict):
-    dead = []
+    dead = set()
     for ws in _ws_clients:
         try:
             await ws.send_json(data)
         except Exception:
-            dead.append(ws)
-    for ws in dead:
-        _ws_clients.remove(ws)
+            dead.add(ws)
+    _ws_clients.difference_update(dead)
+
+
+def _get_settings() -> Settings:
+    with Session(engine) as s:
+        return s.exec(select(Settings)).first() or Settings()
+
+
+def _get_recipient_name() -> str:
+    with Session(engine) as s:
+        r = s.exec(select(CareRecipient)).first()
+        return r.first_name if r else "la personne accompagnée"
+
+
+async def _on_screen_disconnected():
+    """Attend 60 s puis notifie si l'écran ne s'est pas reconnecté."""
+    await asyncio.sleep(60)
+    global _screen_online
+    if not _screen_online:
+        settings = _get_settings()
+        await notify_screen_disconnected(settings, _get_recipient_name())
+        with Session(engine) as s:
+            s.add(ScreenEvent(event="disconnected"))
+            s.commit()
+
+
+# ── Scheduler ──────────────────────────────────────────────────────────────────
+
+def _setup_scheduler():
+    settings = _get_settings()
+    _reschedule_daily_reminder(settings)
+
+
+def _reschedule_daily_reminder(settings: Settings):
+    scheduler.remove_all_jobs()
+    if settings.daily_reminder_enabled and settings.ntfy_topic:
+        h, m = settings.daily_reminder_time.split(":")
+        scheduler.add_job(
+            _run_daily_reminder,
+            CronTrigger(hour=int(h), minute=int(m)),
+            id="daily_reminder",
+            replace_existing=True,
+        )
+
+
+async def _run_daily_reminder():
+    settings = _get_settings()
+    await notify_daily_reminder(settings)
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
 
 def _seed_if_empty():
-    from database import engine
     with Session(engine) as s:
         if s.exec(select(CareRecipient)).first():
+            # Toujours créer les Settings si absents
+            if not s.exec(select(Settings)).first():
+                s.add(Settings())
+                s.commit()
             return
 
         today = date.today().isoformat()
@@ -80,13 +141,11 @@ def _seed_if_empty():
             message="Je pense à toi. Je viens te voir dimanche.",
             next_visit="dimanche après-midi",
         ))
-
-        # Événements récurrents d'exemple
         s.add(Event(
             title="Kiné",
             event_date=next_monday,
             event_time="14:00",
-            recurrence="weekly:0,2",  # lundi et mercredi
+            recurrence="weekly:0,2",
             message_before="Le kiné vient cet après-midi à 14 h. Tu n'as rien à préparer.",
             message_during="Le kiné est là. Gaëtan lui ouvrira la porte.",
             message_after="Le kiné est passé. Tout s'est bien passé.",
@@ -104,13 +163,11 @@ def _seed_if_empty():
             title="Appel de Sophie",
             event_date=today,
             event_time="15:00",
-            recurrence="weekly:6",  # dimanche
+            recurrence="weekly:6",
             message_before="Sophie va appeler cet après-midi vers 15 h.",
             message_during="Sophie t'appelle ! Elle pense à toi.",
             message_after="Tu as parlé avec Sophie. Elle reviendra dimanche prochain.",
         ))
-
-        # FAQ
         for order, (q, a) in enumerate([
             ("Est-ce que je rentre chez moi ?",
              "Tu es chez Gaëtan pour être accompagnée. Tu es en sécurité ici."),
@@ -124,12 +181,11 @@ def _seed_if_empty():
              "Oui, ta chambre est prête. Tu dors ici, tu es bien installée."),
         ]):
             s.add(FAQ(question=q, answer=a, display_order=order))
-
+        s.add(Settings())
         s.commit()
 
 
 def _next_weekday(weekday: int) -> str:
-    """Retourne la prochaine date d'un jour de la semaine (0=lundi)."""
     d = date.today()
     days_ahead = weekday - d.weekday()
     if days_ahead <= 0:
@@ -137,19 +193,16 @@ def _next_weekday(weekday: int) -> str:
     return (d.replace(day=d.day + days_ahead)).isoformat()
 
 
-# ── Résolution des récurrences ────────────────────────────────────────────────
+# ── Récurrences ────────────────────────────────────────────────────────────────
 
 def _event_matches_date(event: Event, d: date) -> bool:
     rec = event.recurrence or "none"
-
     if rec == "none" or not rec:
         return event.event_date == d.isoformat()
-
     if event.event_date and d.isoformat() < event.event_date:
         return False
     if event.recurrence_end and d.isoformat() > event.recurrence_end:
         return False
-
     if rec == "daily":
         return True
     if rec.startswith("weekly:"):
@@ -157,14 +210,15 @@ def _event_matches_date(event: Event, d: date) -> bool:
         return (d.isoweekday() - 1) in days
     if rec.startswith("monthly:"):
         return d.day == int(rec.split(":")[1])
-
     return False
 
 
 def _get_events_for_date(session: Session, d: date) -> list[Event]:
     all_events = session.exec(select(Event)).all()
-    matching = [e for e in all_events if _event_matches_date(e, d)]
-    return sorted(matching, key=lambda e: e.event_time or "")
+    return sorted(
+        [e for e in all_events if _event_matches_date(e, d)],
+        key=lambda e: e.event_time or ""
+    )
 
 
 # ── Display ────────────────────────────────────────────────────────────────────
@@ -179,6 +233,7 @@ def get_display_state(session: Session = Depends(get_session)):
     daily_msg = session.exec(
         select(DailyMessage).order_by(DailyMessage.created_at.desc())
     ).first()
+    settings = session.exec(select(Settings)).first() or Settings()
 
     return {
         "recipient": recipient.model_dump() if recipient else None,
@@ -187,6 +242,8 @@ def get_display_state(session: Session = Depends(get_session)):
         "events_today": [e.model_dump() for e in events],
         "faqs": [f.model_dump() for f in faqs],
         "daily_message": daily_msg.model_dump() if daily_msg else None,
+        "night_start": settings.night_start,
+        "night_end": settings.night_end,
         "server_time": datetime.now().isoformat(),
     }
 
@@ -195,22 +252,84 @@ def get_display_state(session: Session = Depends(get_session)):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
+    global _screen_online, _screen_disconnect_task
     await websocket.accept()
-    _ws_clients.append(websocket)
+    _ws_clients.add(websocket)
+    _screen_online = True
+
+    # Annuler l'alerte de déconnexion en attente si l'écran revient
+    if _screen_disconnect_task and not _screen_disconnect_task.done():
+        _screen_disconnect_task.cancel()
+        settings = _get_settings()
+        if settings.ntfy_topic:
+            asyncio.create_task(notify_screen_reconnected(settings, _get_recipient_name()))
+        with Session(engine) as s:
+            s.add(ScreenEvent(event="connected"))
+            s.commit()
+
     try:
         while True:
             await asyncio.sleep(30)
             await websocket.send_json({"type": "ping"})
     except WebSocketDisconnect:
-        if websocket in _ws_clients:
-            _ws_clients.remove(websocket)
+        _ws_clients.discard(websocket)
+        # Si plus aucun écran connecté, démarrer le timer d'alerte
+        if not _ws_clients:
+            _screen_online = False
+            _screen_disconnect_task = asyncio.create_task(_on_screen_disconnected())
 
 
-# ── Seed reset (dev) ───────────────────────────────────────────────────────────
+# ── Settings ───────────────────────────────────────────────────────────────────
+
+@app.get("/api/settings")
+def get_settings(session: Session = Depends(get_session)):
+    s = session.exec(select(Settings)).first()
+    if not s:
+        s = Settings()
+        session.add(s)
+        session.commit()
+        session.refresh(s)
+    # Ne pas exposer le token en clair
+    data = s.model_dump()
+    data["ntfy_token"] = "***" if s.ntfy_token else ""
+    return data
+
+
+@app.put("/api/settings")
+async def update_settings(data: dict, session: Session = Depends(get_session)):
+    s = session.exec(select(Settings)).first()
+    if not s:
+        s = Settings()
+    for k, v in data.items():
+        if k == "ntfy_token" and v == "***":
+            continue  # ne pas écraser avec le masque
+        if hasattr(s, k):
+            setattr(s, k, v)
+    session.add(s)
+    session.commit()
+    _reschedule_daily_reminder(s)
+    return {"ok": True}
+
+
+@app.post("/api/settings/test-notification")
+async def test_notification(session: Session = Depends(get_session)):
+    s = session.exec(select(Settings)).first() or Settings()
+    ok = await send_notification(
+        s,
+        title="🔔 Snoozolène — Test",
+        message="Les notifications fonctionnent correctement.",
+        priority="default",
+        tags=["bell"],
+    )
+    if not ok:
+        raise HTTPException(status_code=400, detail="Échec : vérifiez l'URL et le topic ntfy.")
+    return {"ok": True}
+
+
+# ── Seed reset ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/admin/reset-seed")
 async def reset_seed(session: Session = Depends(get_session)):
-    """Vide la base et recharge les données de démo."""
     for model in [DailyMessage, Event, FAQ, Person, Household, CareRecipient]:
         for item in session.exec(select(model)).all():
             session.delete(item)

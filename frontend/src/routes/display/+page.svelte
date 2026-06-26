@@ -1,10 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
 	import { displayState, API } from '$lib/store';
-	import { getMoment, getMomentLabel, formatDate, formatTime, eventStatus } from '$lib/time';
+	import { getMoment, getMomentLabel, formatDate, formatTime, eventStatus, isNightTime } from '$lib/time';
 
 	let now = $state(new Date());
-	let moment = $derived(getMoment(now.getHours()));
+	let moment = $derived(getMoment(
+		now.getHours(),
+		$displayState?.night_start ?? '21:30',
+		$displayState?.night_end ?? '07:00'
+	));
 	let faqIndex = $state(0);
 
 	let clockInterval: ReturnType<typeof setInterval>;

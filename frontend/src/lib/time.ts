@@ -1,5 +1,19 @@
-export function getMoment(hour: number): 'nuit' | 'matin' | 'apres-midi' | 'soir' {
-	if (hour >= 0 && hour < 6) return 'nuit';
+export function isNightTime(now: Date, nightStart: string, nightEnd: string): boolean {
+	const toMin = (hhmm: string) => {
+		const [h, m] = hhmm.split(':').map(Number);
+		return h * 60 + m;
+	};
+	const cur = now.getHours() * 60 + now.getMinutes();
+	const start = toMin(nightStart);
+	const end = toMin(nightEnd);
+	// Gère le cas qui passe minuit (ex: 21:30 → 07:00)
+	return start > end ? cur >= start || cur < end : cur >= start && cur < end;
+}
+
+export function getMoment(hour: number, nightStart = '21:30', nightEnd = '07:00'): 'nuit' | 'matin' | 'apres-midi' | 'soir' {
+	const d = new Date();
+	d.setHours(hour, 0, 0, 0);
+	if (isNightTime(d, nightStart, nightEnd)) return 'nuit';
 	if (hour >= 6 && hour < 12) return 'matin';
 	if (hour >= 12 && hour < 18) return 'apres-midi';
 	return 'soir';
