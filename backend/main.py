@@ -1,5 +1,7 @@
 import os
+import io
 import uuid
+import zipfile
 import asyncio
 from datetime import datetime, date
 from contextlib import asynccontextmanager
@@ -9,6 +11,7 @@ from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from PIL import Image
 
@@ -101,11 +104,50 @@ def _reschedule_daily_reminder(settings: Settings):
             id="daily_reminder",
             replace_existing=True,
         )
+    if settings.alarm_enabled:
+        h, m = settings.alarm_time.split(":")
+        days = settings.alarm_days or "0,1,2,3,4,5,6"
+        # APScheduler: day_of_week 0=Lun en ISO, CronTrigger attend mon=0
+        scheduler.add_job(
+            _run_alarm,
+            CronTrigger(hour=int(h), minute=int(m), day_of_week=days),
+            id="alarm",
+            replace_existing=True,
+        )
 
 
 async def _run_daily_reminder():
     settings = _get_settings()
     await notify_daily_reminder(settings)
+
+
+async def _run_alarm():
+    settings = _get_settings()
+    await _broadcast({"type": "alarm", "time": settings.alarm_time})
+    # Lancer la musique sur HA si configuré
+    if settings.ha_url and settings.ha_token and settings.alarm_ha_media_player and settings.alarm_music_url:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"{settings.ha_url.rstrip('/')}/api/services/media_player/play_media",
+                    headers={"Authorization": f"Bearer {settings.ha_token}"},
+                    json={
+                        "entity_id": settings.alarm_ha_media_player,
+                        "media_content_id": settings.alarm_music_url,
+                        "media_content_type": "music",
+                    },
+                )
+        except Exception:
+            pass
+    # Notification aidant
+    if settings.ntfy_topic:
+        await send_notification(
+            settings,
+            title="🔔 Snoozolène — Réveil",
+            message=f"Il est {settings.alarm_time}. L'écran affiche le réveil.",
+            priority="default",
+            tags=["alarm_clock"],
+        )
 
 
 # ── Seed ──────────────────────────────────────────────────────────────────────
@@ -409,6 +451,55 @@ async def test_notification(session: Session = Depends(get_session)):
     if not ok:
         raise HTTPException(status_code=400, detail="Échec : vérifiez l'URL et le topic ntfy.")
     return {"ok": True}
+
+
+# ── Réveil ────────────────────────────────────────────────────────────────────
+
+@app.post("/api/alarm/trigger")
+async def trigger_alarm():
+    await _run_alarm()
+    return {"ok": True}
+
+
+@app.post("/api/alarm/stop")
+async def stop_alarm(session: Session = Depends(get_session)):
+    await _broadcast({"type": "alarm_stop"})
+    s = session.exec(select(Settings)).first() or Settings()
+    if s.ha_url and s.ha_token and s.alarm_ha_media_player:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"{s.ha_url.rstrip('/')}/api/services/media_player/media_stop",
+                    headers={"Authorization": f"Bearer {s.ha_token}"},
+                    json={"entity_id": s.alarm_ha_media_player},
+                )
+        except Exception:
+            pass
+    return {"ok": True}
+
+
+# ── Backup ────────────────────────────────────────────────────────────────────
+
+DB_PATH = os.getenv("DB_PATH", "/data/snoozolene.db")
+
+
+@app.get("/api/backup")
+async def create_backup():
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        if os.path.exists(DB_PATH):
+            zf.write(DB_PATH, "snoozolene.db")
+        for root, _, files in os.walk(MEDIA_DIR):
+            for fname in files:
+                fp = os.path.join(root, fname)
+                zf.write(fp, os.path.relpath(fp, os.path.dirname(MEDIA_DIR)))
+    buf.seek(0)
+    filename = f"snoozolene-backup-{date.today()}.zip"
+    return StreamingResponse(
+        buf,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 # ── Seed reset ─────────────────────────────────────────────────────────────────

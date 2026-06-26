@@ -85,6 +85,12 @@ class Settings(SQLModel, table=True):
     # Météo
     latitude: float = 48.8566
     longitude: float = 2.3522
+    # Réveil
+    alarm_enabled: bool = False
+    alarm_time: str = "08:00"
+    alarm_days: str = "0,1,2,3,4,5,6"   # 0=Lun … 6=Dim
+    alarm_ha_media_player: str = ""       # entity_id du lecteur HA (ex: media_player.salon)
+    alarm_music_url: str = ""             # URL flux radio ou fichier audio
 
 
 class Photo(SQLModel, table=True):

@@ -13,6 +13,8 @@
 	let photoIndex = $state(0);
 	let photoVisible = $state(true);
 	let videoCall = $state<{ room: string; personName: string | null } | null>(null);
+	let alarmActive = $state(false);
+	let alarmTime = $state('');
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
@@ -46,6 +48,8 @@
 			if (msg.type === 'refresh') fetchState();
 			if (msg.type === 'video_call') videoCall = { room: msg.room, personName: msg.person_name ?? null };
 			if (msg.type === 'video_call_end') videoCall = null;
+			if (msg.type === 'alarm') { alarmActive = true; alarmTime = msg.time ?? ''; }
+			if (msg.type === 'alarm_stop') alarmActive = false;
 		};
 		ws.onclose = () => setTimeout(connectWs, 3000);
 	}
@@ -265,6 +269,16 @@
 	{/if}
 </main>
 
+<!-- Overlay réveil -->
+{#if alarmActive}
+	<div class="alarm-overlay">
+		<div class="alarm-sun">☀️</div>
+		<div class="alarm-time">{alarmTime}</div>
+		<p class="alarm-msg">Bonjour ! C'est l'heure de se lever.</p>
+		<p class="alarm-sub">Prenez votre temps, tout va bien.</p>
+	</div>
+{/if}
+
 <!-- Overlay appel vidéo -->
 {#if videoCall}
 	<div class="video-overlay">
@@ -361,26 +375,26 @@
 	}
 
 	.wday-name {
-		font-size: clamp(0.6rem, 1vw, 0.8rem);
+		font-size: clamp(0.8rem, 1.3vw, 1.1rem);
 		color: #94a3b8;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
 
-	.wday-icon { font-size: clamp(1rem, 2vw, 1.5rem); }
-	.wday-max { font-size: clamp(0.75rem, 1.4vw, 1rem); font-weight: 800; color: #ffd700; }
-	.wday-min { font-size: clamp(0.6rem, 1vw, 0.8rem); color: #64748b; }
+	.wday-icon { font-size: clamp(1.3rem, 2.5vw, 2rem); }
+	.wday-max { font-size: clamp(1rem, 1.8vw, 1.4rem); font-weight: 800; color: #ffd700; }
+	.wday-min { font-size: clamp(0.85rem, 1.3vw, 1.1rem); color: #64748b; }
 
 	.moment-pill {
 		margin-left: auto;
 		background: rgba(160, 196, 255, 0.15);
 		border: 1px solid rgba(160, 196, 255, 0.25);
 		color: #a0c4ff;
-		font-size: clamp(0.65rem, 1.2vw, 0.9rem);
+		font-size: clamp(0.9rem, 1.6vw, 1.2rem);
 		font-weight: 800;
 		letter-spacing: 0.15em;
-		padding: 0.3rem 0.9rem;
+		padding: 0.35rem 1rem;
 		border-radius: 2rem;
 		white-space: nowrap;
 	}
@@ -412,7 +426,7 @@
 
 	.clock {
 		font-family: 'Playfair Display', serif;
-		font-size: clamp(4rem, 11vw, 8rem);
+		font-size: clamp(5rem, 13vw, 10rem);
 		font-weight: 700;
 		color: #ffd700;
 		line-height: 1;
@@ -420,18 +434,18 @@
 	}
 
 	.date-line {
-		font-size: clamp(0.9rem, 2vw, 1.5rem);
+		font-size: clamp(1.2rem, 2.6vw, 2.2rem);
 		font-weight: 600;
 		color: #cbd5e1;
 		letter-spacing: 0.08em;
-		margin-top: 0.1rem;
+		margin-top: 0.2rem;
 	}
 
 	.reassurance {
-		font-size: clamp(0.85rem, 1.6vw, 1.2rem);
+		font-size: clamp(1.1rem, 2vw, 1.6rem);
 		color: #86efac;
 		font-weight: 600;
-		margin-top: 0.4rem;
+		margin-top: 0.5rem;
 	}
 
 	/* Message du jour */
@@ -444,14 +458,14 @@
 		flex-shrink: 0;
 	}
 
-	.daily-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 0.1rem; }
+	.daily-icon { font-size: 1.6rem; flex-shrink: 0; margin-top: 0.1rem; }
 	.daily-body { flex: 1; min-width: 0; }
 	.daily-text {
 		margin: 0;
-		font-size: clamp(0.85rem, 1.7vw, 1.25rem);
+		font-size: clamp(1.1rem, 2.2vw, 1.7rem);
 		font-weight: 600;
 		color: #f8f8f8;
-		line-height: 1.35;
+		line-height: 1.4;
 	}
 	.daily-author { font-size: 0.85em; color: #ffd700; }
 
@@ -462,7 +476,7 @@
 	}
 
 	.events-title {
-		font-size: clamp(0.7rem, 1.2vw, 0.9rem);
+		font-size: clamp(0.9rem, 1.5vw, 1.2rem);
 		font-weight: 800;
 		color: #a0c4ff;
 		text-transform: uppercase;
@@ -470,13 +484,13 @@
 		margin: 0 0 0.4rem;
 	}
 
-	.events-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+	.events-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
 
 	.event-item {
 		display: flex;
 		align-items: baseline;
-		gap: 0.5rem;
-		font-size: clamp(0.85rem, 1.6vw, 1.2rem);
+		gap: 0.6rem;
+		font-size: clamp(1.1rem, 2vw, 1.6rem);
 		color: #e2e8f0;
 	}
 
@@ -528,7 +542,7 @@
 		bottom: 0.5rem;
 		left: 0; right: 0;
 		text-align: center;
-		font-size: clamp(0.75rem, 1.3vw, 1rem);
+		font-size: clamp(1rem, 1.8vw, 1.4rem);
 		color: rgba(255,255,255,0.85);
 		font-style: italic;
 		background: rgba(0,0,0,0.45);
@@ -576,8 +590,8 @@
 	}
 
 	.person-info { display: flex; flex-direction: column; line-height: 1.2; }
-	.person-name { font-size: clamp(0.8rem, 1.4vw, 1rem); font-weight: 700; color: #ffd700; }
-	.person-rel { font-size: clamp(0.65rem, 1.1vw, 0.85rem); color: #94a3b8; }
+	.person-name { font-size: clamp(1rem, 1.8vw, 1.4rem); font-weight: 700; color: #ffd700; }
+	.person-rel { font-size: clamp(0.85rem, 1.4vw, 1.1rem); color: #94a3b8; }
 
 	.ha-chips { display: flex; gap: 0.4rem; }
 
@@ -585,12 +599,12 @@
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 0.3rem 0.7rem;
+		padding: 0.3rem 0.8rem;
 	}
 
-	.ha-chip-icon { font-size: clamp(0.9rem, 1.5vw, 1.2rem); }
-	.ha-chip-val { font-size: clamp(0.75rem, 1.3vw, 1rem); font-weight: 700; color: #ffd700; }
-	.ha-chip-label { font-size: clamp(0.55rem, 0.9vw, 0.75rem); color: #64748b; }
+	.ha-chip-icon { font-size: clamp(1.1rem, 1.8vw, 1.5rem); }
+	.ha-chip-val { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 700; color: #ffd700; }
+	.ha-chip-label { font-size: clamp(0.75rem, 1.1vw, 1rem); color: #64748b; }
 
 	.faq-ticker {
 		flex: 1;
@@ -601,9 +615,9 @@
 		min-width: 0;
 	}
 
-	.faq-q { font-size: 1rem; flex-shrink: 0; }
+	.faq-q { font-size: 1.3rem; flex-shrink: 0; }
 	.faq-text {
-		font-size: clamp(0.8rem, 1.4vw, 1.05rem);
+		font-size: clamp(1rem, 1.8vw, 1.4rem);
 		color: #cbd5e1;
 		font-style: italic;
 		white-space: nowrap;
@@ -646,6 +660,58 @@
 		font-weight: 600;
 		margin: 0.5rem 0 0;
 		max-width: 600px;
+	}
+
+	/* ── RÉVEIL ──────────────────────────────────────────── */
+	.alarm-overlay {
+		position: fixed;
+		inset: 0;
+		z-index: 90;
+		background: linear-gradient(145deg, #1a1a0a 0%, #3d3200 40%, #7a6500 100%);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1.5rem;
+		text-align: center;
+		animation: alarm-fade-in 2s ease;
+	}
+
+	@keyframes alarm-fade-in {
+		from { opacity: 0; }
+		to { opacity: 1; }
+	}
+
+	.alarm-sun {
+		font-size: clamp(6rem, 18vw, 12rem);
+		animation: alarm-pulse 3s ease-in-out infinite;
+	}
+
+	@keyframes alarm-pulse {
+		0%, 100% { transform: scale(1); opacity: 0.9; }
+		50% { transform: scale(1.08); opacity: 1; }
+	}
+
+	.alarm-time {
+		font-family: 'Playfair Display', serif;
+		font-size: clamp(5rem, 15vw, 11rem);
+		font-weight: 700;
+		color: #ffd700;
+		line-height: 1;
+	}
+
+	.alarm-msg {
+		font-size: clamp(2rem, 5vw, 4rem);
+		font-weight: 700;
+		color: #fef9c3;
+		margin: 0;
+	}
+
+	.alarm-sub {
+		font-size: clamp(1.3rem, 3vw, 2.5rem);
+		color: rgba(254, 249, 195, 0.65);
+		font-style: italic;
+		margin: 0;
 	}
 
 	/* ── APPEL VIDÉO ──────────────────────────────────────── */

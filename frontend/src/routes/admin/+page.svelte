@@ -47,7 +47,14 @@
 		ha_token: '',
 		latitude: 48.8566,
 		longitude: 2.3522,
+		alarm_enabled: false,
+		alarm_time: '08:00',
+		alarm_days: '0,1,2,3,4,5,6',
+		alarm_ha_media_player: '',
+		alarm_music_url: '',
 	});
+	let triggeringAlarm = $state(false);
+	let downloadingBackup = $state(false);
 	let testingNotif = $state(false);
 	let testingHa = $state(false);
 	let haEntities = $state<Array<{ id: number; entity_id: string; label: string; icon: string; unit: string }>>([]);
@@ -119,6 +126,50 @@
 		});
 		editingCaptionId = null;
 		await load();
+	}
+
+	const ALARM_DAYS_LABELS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+
+	function alarmDayActive(i: number): boolean {
+		return (settings.alarm_days || '').split(',').includes(String(i));
+	}
+
+	function toggleAlarmDay(i: number) {
+		const days = new Set((settings.alarm_days || '').split(',').filter(Boolean).map(Number));
+		days.has(i) ? days.delete(i) : days.add(i);
+		settings.alarm_days = [...days].sort().join(',') || '';
+	}
+
+	async function triggerAlarm() {
+		triggeringAlarm = true;
+		try {
+			await fetch(`${API}/api/alarm/trigger`, { method: 'POST' });
+			showToast('Réveil déclenché sur l\'écran ✓');
+		} finally {
+			triggeringAlarm = false;
+		}
+	}
+
+	async function stopAlarm() {
+		await fetch(`${API}/api/alarm/stop`, { method: 'POST' });
+		showToast('Réveil arrêté ✓');
+	}
+
+	async function downloadBackup() {
+		downloadingBackup = true;
+		try {
+			const res = await fetch(`${API}/api/backup`);
+			const blob = await res.blob();
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement('a');
+			a.href = url;
+			a.download = `snoozolene-backup-${new Date().toISOString().slice(0, 10)}.zip`;
+			a.click();
+			URL.revokeObjectURL(url);
+			showToast('Sauvegarde téléchargée ✓');
+		} finally {
+			downloadingBackup = false;
+		}
 	}
 
 	async function testHaConnection() {
@@ -752,6 +803,51 @@
 		</section>
 
 		<section class="card">
+			<h2>⏰ Réveil</h2>
+			<p class="hint">Affiche un écran de réveil lumineux sur la tablette à l'heure choisie. Peut aussi lancer de la musique via Home Assistant.</p>
+
+			<div class="setting-row">
+				<div><strong>Activer le réveil</strong></div>
+				<label class="toggle">
+					<input type="checkbox" bind:checked={settings.alarm_enabled} />
+					<span class="slider"></span>
+				</label>
+			</div>
+
+			{#if settings.alarm_enabled}
+				<label class="field-label">Heure du réveil</label>
+				<input type="time" bind:value={settings.alarm_time} />
+
+				<label class="field-label">Jours actifs</label>
+				<div class="days-grid" style="margin-bottom:0.75rem">
+					{#each ALARM_DAYS_LABELS as label, i}
+						<button
+							type="button"
+							class="day-btn"
+							class:active={alarmDayActive(i)}
+							onclick={() => toggleAlarmDay(i)}
+						>{label}</button>
+					{/each}
+				</div>
+
+				<label class="field-label">Lecteur HA pour la musique (optionnel)</label>
+				<input type="text" bind:value={settings.alarm_ha_media_player} placeholder="ex: media_player.salon" />
+
+				<label class="field-label">URL de la musique / flux radio</label>
+				<input type="url" bind:value={settings.alarm_music_url} placeholder="ex: https://stream.radio.fr/..." />
+			{/if}
+
+			<button class="primary" onclick={saveSettings}>Enregistrer</button>
+
+			<div class="ha-btn-row" style="margin-top:0.5rem">
+				<button class="btn-test" onclick={triggerAlarm} disabled={triggeringAlarm} style="flex:1">
+					{triggeringAlarm ? '…' : '⏰ Tester le réveil maintenant'}
+				</button>
+				<button class="btn-danger-small" onclick={stopAlarm} style="flex:1">⏹ Arrêter</button>
+			</div>
+		</section>
+
+		<section class="card">
 			<h2>🏠 Home Assistant</h2>
 			<p class="hint">Affichez la température, la présence ou n'importe quel capteur HA sur l'écran de Agnès.</p>
 
@@ -862,6 +958,14 @@
 				Trouvez vos coordonnées sur <strong>maps.google.com</strong> → clic droit sur votre adresse → copier les coordonnées.
 			</p>
 			<button class="primary" onclick={saveSettings}>Enregistrer</button>
+		</section>
+
+		<section class="card">
+			<h2>💾 Sauvegarde</h2>
+			<p class="hint">Télécharge un fichier ZIP contenant la base de données et toutes les photos. À faire avant chaque mise à jour.</p>
+			<button class="btn-backup" onclick={downloadBackup} disabled={downloadingBackup}>
+				{downloadingBackup ? 'Préparation…' : '💾 Télécharger la sauvegarde'}
+			</button>
 		</section>
 
 		<section class="card danger-zone">
@@ -1168,6 +1272,34 @@
 		color: #1565c0;
 		opacity: 1;
 	}
+
+	.btn-danger-small {
+		padding: 0.9rem;
+		background: white;
+		color: #c00;
+		border: 2px solid #c00;
+		border-radius: 0.5rem;
+		font-size: 0.95rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.btn-danger-small:hover { background: #fee; }
+
+	.btn-backup {
+		width: 100%;
+		padding: 0.9rem;
+		background: #e8f4e8;
+		color: #1a4a1a;
+		border: 2px solid #2e7d32;
+		border-radius: 0.5rem;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.btn-backup:hover:not(:disabled) { background: #d0ecd0; }
+	.btn-backup:disabled { opacity: 0.5; cursor: not-allowed; }
 
 	/* ── Zone danger ──────────────────────────────────────── */
 	.danger-zone { border: 1px solid #fcc; }
