@@ -18,6 +18,15 @@
 	let faqInterval: ReturnType<typeof setInterval>;
 	let photoInterval: ReturnType<typeof setInterval>;
 	let ws: WebSocket;
+	let wakeLock: WakeLockSentinel | null = null;
+
+	async function requestWakeLock() {
+		try {
+			wakeLock = await (navigator as any).wakeLock?.request('screen');
+		} catch (e) {
+			// pas supporté ou refusé, on continue sans
+		}
+	}
 
 	async function fetchState() {
 		try {
@@ -44,6 +53,11 @@
 	onMount(() => {
 		fetchState();
 		connectWs();
+		requestWakeLock();
+		// Re-acquérir le wake lock si la page redevient visible (ex: retour de veille)
+		document.addEventListener('visibilitychange', () => {
+			if (document.visibilityState === 'visible') requestWakeLock();
+		});
 		clockInterval = setInterval(() => { now = new Date(); }, 10000);
 		faqInterval = setInterval(() => {
 			if ($displayState?.faqs?.length) {
@@ -67,6 +81,7 @@
 		clearInterval(faqInterval);
 		clearInterval(photoInterval);
 		ws?.close();
+		wakeLock?.release();
 	});
 
 	function _formatHaState(state: string, entityId: string): string {
