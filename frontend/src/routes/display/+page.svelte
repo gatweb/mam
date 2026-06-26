@@ -10,10 +10,13 @@
 		$displayState?.night_end ?? '07:00'
 	));
 	let faqIndex = $state(0);
+	let photoIndex = $state(0);
+	let photoVisible = $state(true);
 	let videoCall = $state<{ room: string; personName: string | null } | null>(null);
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
+	let photoInterval: ReturnType<typeof setInterval>;
 	let ws: WebSocket;
 
 	async function fetchState() {
@@ -51,11 +54,23 @@
 				faqIndex = (faqIndex + 1) % $displayState.faqs.length;
 			}
 		}, 12000);
+
+		photoInterval = setInterval(() => {
+			const photos = $displayState?.photos ?? [];
+			if (photos.length > 1) {
+				photoVisible = false;
+				setTimeout(() => {
+					photoIndex = (photoIndex + 1) % photos.length;
+					photoVisible = true;
+				}, 800);
+			}
+		}, 18000);
 	});
 
 	onDestroy(() => {
 		clearInterval(clockInterval);
 		clearInterval(faqInterval);
+		clearInterval(photoInterval);
 		ws?.close();
 	});
 
@@ -73,6 +88,7 @@
 	const isNight = $derived(moment === 'nuit');
 	const isSundown = $derived(moment === 'soir');
 	const currentFaq = $derived($displayState?.faqs?.[faqIndex] ?? null);
+	const currentPhoto = $derived($displayState?.photos?.[photoIndex] ?? null);
 	const primaryPerson = $derived($displayState?.people?.find(p => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
 </script>
 
@@ -157,6 +173,16 @@
 		{#if currentFaq}
 			<section class="faq-block">
 				<p class="faq-answer">{currentFaq.answer}</p>
+			</section>
+		{/if}
+
+		<!-- DIAPORAMA FAMILLE -->
+		{#if currentPhoto}
+			<section class="slideshow-block" class:visible={photoVisible}>
+				<img src="{API}{currentPhoto.path}" alt={currentPhoto.caption ?? 'Photo famille'} class="slideshow-img" />
+				{#if currentPhoto.caption}
+					<p class="slideshow-caption">{currentPhoto.caption}</p>
+				{/if}
 			</section>
 		{/if}
 
@@ -330,6 +356,34 @@
 		color: #d0d0d0;
 		font-style: italic;
 		margin: 0;
+	}
+
+	.slideshow-block {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.5rem;
+		opacity: 0;
+		transition: opacity 0.8s ease;
+	}
+
+	.slideshow-block.visible { opacity: 1; }
+
+	.slideshow-img {
+		max-height: clamp(180px, 28vh, 320px);
+		max-width: 100%;
+		border-radius: 1rem;
+		object-fit: contain;
+		border: 4px solid rgba(255, 215, 0, 0.3);
+		box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+	}
+
+	.slideshow-caption {
+		font-size: clamp(1rem, 2vw, 1.6rem);
+		color: #d0d0d0;
+		font-style: italic;
+		margin: 0;
+		text-align: center;
 	}
 
 	.person-block {

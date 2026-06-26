@@ -84,6 +84,15 @@ class Settings(SQLModel, table=True):
     ha_token: str = ""
 
 
+class Photo(SQLModel, table=True):
+    """Photos du diaporama famille."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    path: str
+    caption: Optional[str] = None
+    display_order: int = 0
+    uploaded_at: datetime = Field(default_factory=datetime.utcnow)
+
+
 class HAEntity(SQLModel, table=True):
     """Entité Home Assistant à afficher sur l'écran."""
     id: Optional[int] = Field(default=None, primary_key=True)

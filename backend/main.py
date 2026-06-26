@@ -13,7 +13,7 @@ from sqlmodel import Session, select
 from PIL import Image
 
 from database import get_session, init_db, engine
-from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity
+from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo
 from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
 
 MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
@@ -259,6 +259,7 @@ async def get_display_state(session: Session = Depends(get_session)):
     ).first()
     settings = session.exec(select(Settings)).first() or Settings()
 
+    photos = session.exec(select(Photo).order_by(Photo.display_order, Photo.uploaded_at)).all()
     ha_entities = session.exec(select(HAEntity).order_by(HAEntity.display_order)).all()
     ha_states = []
     if ha_entities and settings.ha_url and settings.ha_token:
@@ -274,6 +275,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         "night_start": settings.night_start,
         "night_end": settings.night_end,
         "ha_states": ha_states,
+        "photos": [p.model_dump() for p in photos],
         "server_time": datetime.now().isoformat(),
     }
 
@@ -495,6 +497,71 @@ async def delete_person(person_id: int, session: Session = Depends(get_session))
     if not person:
         raise HTTPException(status_code=404)
     session.delete(person)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True}
+
+
+# ── Photos diaporama ──────────────────────────────────────────────────────────
+
+@app.get("/api/photos")
+def list_photos(session: Session = Depends(get_session)):
+    return session.exec(select(Photo).order_by(Photo.display_order, Photo.uploaded_at)).all()
+
+
+@app.post("/api/photos")
+async def upload_photo_slide(
+    file: UploadFile = File(...),
+    caption: str = "",
+    session: Session = Depends(get_session),
+):
+    filename = f"{datetime.now().timestamp()}_{file.filename}"
+    path = f"{MEDIA_DIR}/photos/{filename}"
+    content = await file.read()
+    with open(path, "wb") as f:
+        f.write(content)
+    try:
+        img = Image.open(path)
+        img.thumbnail((1920, 1920))
+        img.save(path, quality=85, optimize=True)
+    except Exception:
+        pass
+    count = len(session.exec(select(Photo)).all())
+    photo = Photo(path=f"/media/photos/{filename}", caption=caption or None, display_order=count)
+    session.add(photo)
+    session.commit()
+    session.refresh(photo)
+    await _broadcast({"type": "refresh"})
+    return photo
+
+
+@app.put("/api/photos/{photo_id}")
+async def update_photo(photo_id: int, data: dict, session: Session = Depends(get_session)):
+    photo = session.get(Photo, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404)
+    if "caption" in data:
+        photo.caption = data["caption"] or None
+    if "display_order" in data:
+        photo.display_order = data["display_order"]
+    session.add(photo)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return photo
+
+
+@app.delete("/api/photos/{photo_id}")
+async def delete_photo(photo_id: int, session: Session = Depends(get_session)):
+    photo = session.get(Photo, photo_id)
+    if not photo:
+        raise HTTPException(status_code=404)
+    try:
+        full_path = MEDIA_DIR + photo.path.replace("/media", "")
+        if os.path.exists(full_path):
+            os.remove(full_path)
+    except Exception:
+        pass
+    session.delete(photo)
     session.commit()
     await _broadcast({"type": "refresh"})
     return {"ok": True}

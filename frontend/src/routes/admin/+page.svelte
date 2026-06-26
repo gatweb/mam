@@ -29,6 +29,10 @@
 	let newFaq = $state({ question: '', answer: '' });
 	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false, allow_video_call: false });
 	let callingPersonId = $state<number | null>(null);
+	let photos = $state<Array<{ id: number; path: string; caption: string | null; display_order: number }>>([]);
+	let uploadingPhotos = $state(false);
+	let editingCaptionId = $state<number | null>(null);
+	let editingCaption = $state('');
 
 	let settings = $state({
 		ntfy_url: 'https://ntfy.sh',
@@ -54,13 +58,14 @@
 	let activeTab = $state('message');
 
 	async function load() {
-		const [h, f, e, p, st, ha] = await Promise.all([
+		const [h, f, e, p, st, ha, ph] = await Promise.all([
 			fetch(`${API}/api/household`).then(r => r.json()),
 			fetch(`${API}/api/faqs`).then(r => r.json()),
 			fetch(`${API}/api/events`).then(r => r.json()),
 			fetch(`${API}/api/people`).then(r => r.json()),
 			fetch(`${API}/api/settings`).then(r => r.json()),
 			fetch(`${API}/api/ha/entities`).then(r => r.json()),
+			fetch(`${API}/api/photos`).then(r => r.json()),
 		]);
 		household = h || household;
 		faqs = f;
@@ -68,6 +73,7 @@
 		people = p;
 		if (st) settings = { ...settings, ...st };
 		haEntities = ha;
+		photos = ph;
 	}
 
 	async function saveSettings() {
@@ -77,6 +83,40 @@
 			body: JSON.stringify(settings),
 		});
 		showToast('Paramètres enregistrés ✓');
+	}
+
+	async function uploadPhotos(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		if (!files.length) return;
+		uploadingPhotos = true;
+		try {
+			for (const file of files) {
+				const form = new FormData();
+				form.append('file', file);
+				await fetch(`${API}/api/photos`, { method: 'POST', body: form });
+			}
+			await load();
+			showToast(`${files.length} photo(s) ajoutée(s) ✓`);
+		} finally {
+			uploadingPhotos = false;
+			input.value = '';
+		}
+	}
+
+	async function deletePhoto(id: number) {
+		await fetch(`${API}/api/photos/${id}`, { method: 'DELETE' });
+		await load();
+	}
+
+	async function saveCaption(id: number) {
+		await fetch(`${API}/api/photos/${id}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ caption: editingCaption }),
+		});
+		editingCaptionId = null;
+		await load();
 	}
 
 	async function testHaConnection() {
@@ -312,7 +352,7 @@
 	</header>
 
 	<nav class="tabs">
-		{#each [['message','✉️ Message'], ['agenda','📅 Agenda'], ['faq','💬 Questions'], ['proches','👨‍👩‍👧 Proches'], ['notifs','🔔 Alertes'], ['maison','🏠 Maison']] as [tab, label]}
+		{#each [['message','✉️ Message'], ['agenda','📅 Agenda'], ['faq','💬 Questions'], ['proches','👨‍👩‍👧 Proches'], ['photos','📸 Photos'], ['notifs','🔔 Alertes'], ['maison','🏠 Maison']] as [tab, label]}
 			<button class:active={activeTab === tab} onclick={() => activeTab = tab}>{label}</button>
 		{/each}
 	</nav>
@@ -578,6 +618,59 @@
 						</li>
 					{/each}
 				</ul>
+			{/if}
+		</section>
+	{/if}
+
+	{#if activeTab === 'photos'}
+		<section class="card">
+			<h2>Ajouter des photos</h2>
+			<p class="hint">Les photos défilent en diaporama sur l'écran de Martine. Vous pouvez en ajouter plusieurs à la fois.</p>
+			<label class="photo-drop-zone" class:uploading={uploadingPhotos}>
+				{#if uploadingPhotos}
+					<span>Envoi en cours…</span>
+				{:else}
+					<span class="drop-icon">📸</span>
+					<span>Cliquer ou glisser des photos ici</span>
+					<span class="hint" style="margin:0">JPG, PNG, HEIC — plusieurs fichiers acceptés</span>
+				{/if}
+				<input type="file" accept="image/*" multiple onchange={uploadPhotos} class="hidden-input" />
+			</label>
+		</section>
+
+		<section class="card">
+			<h2>Album ({photos.length} photo{photos.length > 1 ? 's' : ''})</h2>
+			{#if photos.length === 0}
+				<p class="empty">Aucune photo dans l'album.</p>
+			{:else}
+				<div class="photo-grid">
+					{#each photos as photo}
+						<div class="photo-card">
+							<img src="{API}{photo.path}" alt={photo.caption ?? ''} class="photo-thumb" />
+							<div class="photo-card-body">
+								{#if editingCaptionId === photo.id}
+									<input
+										type="text"
+										bind:value={editingCaption}
+										placeholder="Légende (ex: Gaëtan et Martine, Noël 2023)"
+										onkeydown={(e) => { if (e.key === 'Enter') saveCaption(photo.id); if (e.key === 'Escape') editingCaptionId = null; }}
+										style="margin-bottom:0.4rem"
+									/>
+									<div class="photo-card-actions">
+										<button class="btn-save-caption" onclick={() => saveCaption(photo.id)}>Enregistrer</button>
+										<button class="btn-cancel-caption" onclick={() => editingCaptionId = null}>Annuler</button>
+									</div>
+								{:else}
+									<span
+										class="photo-caption"
+										onclick={() => { editingCaptionId = photo.id; editingCaption = photo.caption ?? ''; }}
+									>{photo.caption ?? '✏️ Ajouter une légende'}</span>
+									<button class="del photo-del" onclick={() => deletePhoto(photo.id)} title="Supprimer">✕</button>
+								{/if}
+							</div>
+						</div>
+					{/each}
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -1140,6 +1233,94 @@
 	}
 	.toggle input:checked + .slider { background: #1a6e1a; }
 	.toggle input:checked + .slider::before { transform: translateX(22px); }
+
+	/* ── Photos ──────────────────────────────────────────── */
+	.photo-drop-zone {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 0.4rem;
+		border: 2px dashed #ddd;
+		border-radius: 0.75rem;
+		padding: 2rem 1rem;
+		cursor: pointer;
+		text-align: center;
+		transition: border-color 0.2s, background 0.2s;
+		min-height: 120px;
+	}
+
+	.photo-drop-zone:hover { border-color: #1a1a2e; background: #f8f8ff; }
+	.photo-drop-zone.uploading { opacity: 0.6; cursor: wait; }
+	.drop-icon { font-size: 2.5rem; }
+
+	.photo-grid {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+		gap: 0.75rem;
+	}
+
+	.photo-card {
+		border-radius: 0.75rem;
+		overflow: hidden;
+		border: 1px solid #eee;
+		display: flex;
+		flex-direction: column;
+	}
+
+	.photo-thumb {
+		width: 100%;
+		aspect-ratio: 1;
+		object-fit: cover;
+		display: block;
+	}
+
+	.photo-card-body {
+		padding: 0.4rem 0.5rem;
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		min-height: 32px;
+	}
+
+	.photo-caption {
+		flex: 1;
+		font-size: 0.78rem;
+		color: #666;
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.photo-caption:hover { color: #1a1a2e; text-decoration: underline; }
+
+	.photo-del {
+		padding: 0.2rem 0.4rem;
+		font-size: 0.75rem;
+		flex-shrink: 0;
+	}
+
+	.photo-card-actions { display: flex; gap: 0.3rem; }
+
+	.btn-save-caption {
+		padding: 0.3rem 0.6rem;
+		background: #1a1a2e;
+		color: white;
+		border: none;
+		border-radius: 0.3rem;
+		cursor: pointer;
+		font-size: 0.8rem;
+	}
+
+	.btn-cancel-caption {
+		padding: 0.3rem 0.6rem;
+		background: #eee;
+		border: none;
+		border-radius: 0.3rem;
+		cursor: pointer;
+		font-size: 0.8rem;
+	}
 
 	/* ── Home Assistant ──────────────────────────────────── */
 	.ha-btn-row { display: flex; gap: 0.5rem; margin-bottom: 0; }
