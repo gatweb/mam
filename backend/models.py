@@ -37,7 +37,8 @@ class Event(SQLModel, table=True):
     title: str
     event_date: str  # ISO date YYYY-MM-DD
     event_time: Optional[str] = None  # HH:MM
-    recurrence: Optional[str] = None  # "daily", "weekly:1" (lundi), "none"
+    recurrence: Optional[str] = None  # "none" | "daily" | "weekly:0,2,4" | "monthly:15"
+    recurrence_end: Optional[str] = None  # ISO date YYYY-MM-DD, None = sans fin
     person_name: Optional[str] = None  # "le kiné Marc"
     message_before: Optional[str] = None
     message_during: Optional[str] = None

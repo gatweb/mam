@@ -1,5 +1,4 @@
 import os
-import json
 import asyncio
 from datetime import datetime, date
 from typing import Optional
@@ -83,6 +82,42 @@ def _seed_if_empty():
         s.commit()
 
 
+# ── Résolution des récurrences ────────────────────────────────────────────────
+
+def _event_matches_date(event: Event, d: date) -> bool:
+    """Vérifie si un événement (ponctuel ou récurrent) tombe à la date d."""
+    rec = event.recurrence or "none"
+
+    if rec == "none" or not rec:
+        return event.event_date == d.isoformat()
+
+    # Vérifier que la date de début est passée et la date de fin pas encore atteinte
+    if event.event_date and d.isoformat() < event.event_date:
+        return False
+    if event.recurrence_end and d.isoformat() > event.recurrence_end:
+        return False
+
+    if rec == "daily":
+        return True
+
+    if rec.startswith("weekly:"):
+        # "weekly:0,2,4"  → lundi=0 … dimanche=6 (isoweekday: lun=1…dim=7)
+        days = [int(x) for x in rec.split(":")[1].split(",")]
+        return (d.isoweekday() - 1) in days  # isoweekday lun=1 → 0-indexed
+
+    if rec.startswith("monthly:"):
+        day_of_month = int(rec.split(":")[1])
+        return d.day == day_of_month
+
+    return False
+
+
+def _get_events_for_date(session: Session, d: date) -> list[Event]:
+    all_events = session.exec(select(Event)).all()
+    matching = [e for e in all_events if _event_matches_date(e, d)]
+    return sorted(matching, key=lambda e: e.event_time or "")
+
+
 # ── Display endpoint (écran patient) ──────────────────────────────────────────
 
 @app.get("/api/display")
@@ -93,10 +128,8 @@ def get_display_state(session: Session = Depends(get_session)):
     people = session.exec(select(Person)).all()
     faqs = session.exec(select(FAQ).where(FAQ.active == True).order_by(FAQ.display_order)).all()
 
-    today = date.today().isoformat()
-    events = session.exec(
-        select(Event).where(Event.event_date == today).order_by(Event.event_time)
-    ).all()
+    today = date.today()
+    events = _get_events_for_date(session, today)
 
     daily_msg = session.exec(
         select(DailyMessage).order_by(DailyMessage.created_at.desc())

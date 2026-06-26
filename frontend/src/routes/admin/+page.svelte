@@ -4,10 +4,27 @@
 
 	let household = $state({ display_name: '', reassurance_message: '' });
 	let faqs = $state<Array<{ id: number; question: string; answer: string }>>([]);
-	let events = $state<Array<{ id: number; title: string; event_date: string; event_time: string | null; message_before: string | null }>>([]);
+	let events = $state<Array<{ id: number; title: string; event_date: string; event_time: string | null; recurrence: string | null; recurrence_end: string | null; message_before: string | null }>>([]);
 	let people = $state<Array<{ id: number; first_name: string; relation: string; is_primary_caregiver: boolean }>>([]);
 
 	let quickMsg = $state({ content: '', author: 'Gaëtan' });
+	const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
+	let selectedDays = $state<boolean[]>([false, false, false, false, false, false, false]);
+	let recurrenceType = $state<'none' | 'daily' | 'weekly' | 'monthly'>('none');
+	let monthlyDay = $state(1);
+	let recurrenceEnd = $state('');
+
+	function buildRecurrence(): string {
+		if (recurrenceType === 'none') return 'none';
+		if (recurrenceType === 'daily') return 'daily';
+		if (recurrenceType === 'weekly') {
+			const days = selectedDays.map((on, i) => on ? i : -1).filter(i => i >= 0);
+			return days.length ? `weekly:${days.join(',')}` : 'none';
+		}
+		if (recurrenceType === 'monthly') return `monthly:${monthlyDay}`;
+		return 'none';
+	}
+
 	let newEvent = $state({ title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' });
 	let newFaq = $state({ question: '', answer: '' });
 	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false });
@@ -53,12 +70,20 @@
 	}
 
 	async function addEvent() {
+		const rec = buildRecurrence();
 		await fetch(`${API}/api/events`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(newEvent),
+			body: JSON.stringify({
+				...newEvent,
+				recurrence: rec,
+				recurrence_end: recurrenceEnd || null,
+			}),
 		});
 		newEvent = { title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' };
+		recurrenceType = 'none';
+		selectedDays = [false, false, false, false, false, false, false];
+		recurrenceEnd = '';
 		await load();
 		showToast('Événement ajouté ✓');
 	}
@@ -136,26 +161,118 @@
 	{#if activeTab === 'agenda'}
 		<section class="card">
 			<h2>Ajouter un événement</h2>
+
 			<input type="text" bind:value={newEvent.title} placeholder="Ex : Kiné Marc" />
-			<div class="row">
-				<input type="date" bind:value={newEvent.event_date} />
-				<input type="time" bind:value={newEvent.event_time} />
+
+			<!-- Récurrence -->
+			<label class="field-label">Récurrence</label>
+			<div class="rec-buttons">
+				{#each [['none','Une fois'], ['daily','Tous les jours'], ['weekly','Certains jours'], ['monthly','Chaque mois']] as [val, label]}
+					<button
+						type="button"
+						class="rec-btn"
+						class:active={recurrenceType === val}
+						onclick={() => recurrenceType = val as typeof recurrenceType}
+					>{label}</button>
+				{/each}
 			</div>
-			<input type="text" bind:value={newEvent.message_before} placeholder="Message avant (ex: Le kiné vient cet après-midi)" />
-			<input type="text" bind:value={newEvent.message_during} placeholder="Message pendant (ex: Le kiné est là !)" />
-			<input type="text" bind:value={newEvent.message_after} placeholder="Message après (ex: Le kiné est passé. Tout va bien.)" />
+
+			{#if recurrenceType === 'none'}
+				<!-- Date unique -->
+				<div class="row">
+					<input type="date" bind:value={newEvent.event_date} />
+					<input type="time" bind:value={newEvent.event_time} />
+				</div>
+			{:else if recurrenceType === 'weekly'}
+				<div class="days-grid">
+					{#each DAYS as day, i}
+						<button
+							type="button"
+							class="day-btn"
+							class:active={selectedDays[i]}
+							onclick={() => selectedDays[i] = !selectedDays[i]}
+						>{day}</button>
+					{/each}
+				</div>
+				<div class="row">
+					<div>
+						<label class="field-label">À partir du</label>
+						<input type="date" bind:value={newEvent.event_date} />
+					</div>
+					<div>
+						<label class="field-label">Heure</label>
+						<input type="time" bind:value={newEvent.event_time} />
+					</div>
+				</div>
+				<label class="field-label">Jusqu'au (optionnel)</label>
+				<input type="date" bind:value={recurrenceEnd} placeholder="Laisser vide = sans fin" />
+			{:else if recurrenceType === 'daily'}
+				<div class="row">
+					<div>
+						<label class="field-label">À partir du</label>
+						<input type="date" bind:value={newEvent.event_date} />
+					</div>
+					<div>
+						<label class="field-label">Heure</label>
+						<input type="time" bind:value={newEvent.event_time} />
+					</div>
+				</div>
+				<label class="field-label">Jusqu'au (optionnel)</label>
+				<input type="date" bind:value={recurrenceEnd} />
+			{:else if recurrenceType === 'monthly'}
+				<label class="field-label">Jour du mois</label>
+				<input type="number" bind:value={monthlyDay} min="1" max="28" />
+				<div class="row">
+					<div>
+						<label class="field-label">À partir du</label>
+						<input type="date" bind:value={newEvent.event_date} />
+					</div>
+					<div>
+						<label class="field-label">Heure</label>
+						<input type="time" bind:value={newEvent.event_time} />
+					</div>
+				</div>
+			{/if}
+
+			<!-- Messages contextuels -->
+			<details class="messages-details">
+				<summary>Messages contextuels (optionnel)</summary>
+				<input type="text" bind:value={newEvent.message_before} placeholder="Avant : « Le kiné vient cet après-midi »" />
+				<input type="text" bind:value={newEvent.message_during} placeholder="Pendant : « Le kiné est là ! »" />
+				<input type="text" bind:value={newEvent.message_after} placeholder="Après : « Le kiné est passé. Tout va bien. »" />
+			</details>
+
 			<button class="primary" onclick={addEvent} disabled={!newEvent.title.trim()}>Ajouter</button>
 		</section>
 
 		<section class="card">
-			<h2>Événements prévus</h2>
+			<h2>Événements programmés</h2>
 			{#if events.length === 0}
 				<p class="empty">Aucun événement.</p>
 			{:else}
 				<ul class="list">
 					{#each events as e}
 						<li>
-							<span><strong>{e.title}</strong> — {e.event_date} {e.event_time ?? ''}</span>
+							<div>
+								<strong>{e.title}</strong>
+								{#if e.event_time}
+									<span class="event-time"> à {e.event_time.replace(':', 'h')}</span>
+								{/if}
+								<div class="event-meta">
+									{#if !e.recurrence || e.recurrence === 'none'}
+										📅 {e.event_date}
+									{:else if e.recurrence === 'daily'}
+										🔁 Tous les jours
+									{:else if e.recurrence?.startsWith('weekly:')}
+										🔁 {e.recurrence.split(':')[1].split(',').map(d => DAYS[+d]).join(', ')}
+									{:else if e.recurrence?.startsWith('monthly:')}
+										🔁 Le {e.recurrence.split(':')[1]} du mois
+									{/if}
+									{#if e.recurrence_end}
+										<span class="rec-end"> · jusqu'au {e.recurrence_end}</span>
+									{/if}
+								</div>
+							</div>
 							<button class="del" onclick={() => deleteEvent(e.id)}>✕</button>
 						</li>
 					{/each}
@@ -339,6 +456,81 @@
 	.checkbox input { width: auto; margin: 0; }
 
 	.empty { color: #999; font-style: italic; }
+
+	.field-label {
+		display: block;
+		font-size: 0.85rem;
+		font-weight: 600;
+		color: #555;
+		margin-bottom: 0.3rem;
+	}
+
+	.rec-buttons {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.4rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.rec-btn {
+		padding: 0.4rem 0.9rem;
+		border: 2px solid #ddd;
+		background: white;
+		border-radius: 2rem;
+		cursor: pointer;
+		font-size: 0.9rem;
+	}
+
+	.rec-btn.active {
+		background: #1a1a2e;
+		color: white;
+		border-color: #1a1a2e;
+	}
+
+	.days-grid {
+		display: flex;
+		gap: 0.4rem;
+		margin-bottom: 0.75rem;
+	}
+
+	.day-btn {
+		flex: 1;
+		padding: 0.6rem 0;
+		border: 2px solid #ddd;
+		background: white;
+		border-radius: 0.5rem;
+		cursor: pointer;
+		font-size: 0.85rem;
+		font-weight: 600;
+	}
+
+	.day-btn.active {
+		background: #ffd700;
+		border-color: #e6c200;
+		color: #1a1a2e;
+	}
+
+	.messages-details {
+		margin-bottom: 0.75rem;
+		border: 1px solid #eee;
+		border-radius: 0.5rem;
+		padding: 0.5rem 0.75rem;
+	}
+
+	.messages-details summary {
+		cursor: pointer;
+		font-size: 0.9rem;
+		color: #555;
+		padding: 0.3rem 0;
+	}
+
+	.messages-details input {
+		margin-top: 0.5rem;
+	}
+
+	.event-time { color: #555; font-weight: 400; }
+	.event-meta { font-size: 0.85rem; color: #777; margin-top: 0.2rem; }
+	.rec-end { color: #999; }
 
 	.toast {
 		position: fixed;
