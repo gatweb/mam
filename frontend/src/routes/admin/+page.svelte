@@ -5,7 +5,7 @@
 	let household = $state({ display_name: '', reassurance_message: '' });
 	let faqs = $state<Array<{ id: number; question: string; answer: string }>>([]);
 	let events = $state<Array<{ id: number; title: string; event_date: string; event_time: string | null; recurrence: string | null; recurrence_end: string | null; message_before: string | null }>>([]);
-	let people = $state<Array<{ id: number; first_name: string; relation: string; is_primary_caregiver: boolean }>>([]);
+	let people = $state<Array<{ id: number; first_name: string; relation: string; message: string | null; next_visit: string | null; photo_path: string | null; is_primary_caregiver: boolean }>>([]);
 
 	let quickMsg = $state({ content: '', author: 'Gaëtan' });
 	const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
@@ -109,15 +109,63 @@
 		await load();
 	}
 
+	let pendingPhoto = $state<File | null>(null);
+	let photoPreview = $state<string | null>(null);
+	let uploadingFor = $state<number | null>(null);
+
+	function onPhotoSelected(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		pendingPhoto = file;
+		photoPreview = URL.createObjectURL(file);
+	}
+
+	async function uploadPhotoForPerson(personId: number) {
+		if (!pendingPhoto) return;
+		uploadingFor = personId;
+		const form = new FormData();
+		form.append('file', pendingPhoto);
+		const res = await fetch(`${API}/api/upload/photo`, { method: 'POST', body: form });
+		const { path } = await res.json();
+		await fetch(`${API}/api/people/${personId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ photo_path: path }),
+		});
+		pendingPhoto = null;
+		photoPreview = null;
+		uploadingFor = null;
+		await load();
+		showToast('Photo ajoutée ✓');
+	}
+
 	async function addPerson() {
-		await fetch(`${API}/api/people`, {
+		const res = await fetch(`${API}/api/people`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify(newPerson),
 		});
+		const created = await res.json();
+		// Si une photo était sélectionnée, on l'attache immédiatement
+		if (pendingPhoto) {
+			await uploadPhotoForPerson(created.id);
+		}
 		newPerson = { first_name: '', relation: '', message: '', is_primary_caregiver: false };
 		await load();
 		showToast('Proche ajouté ✓');
+	}
+
+	async function deletePerson(id: number) {
+		await fetch(`${API}/api/people/${id}`, { method: 'DELETE' });
+		await load();
+	}
+
+	async function resetSeed() {
+		if (!confirm('Remettre toutes les données de démonstration ? (les données actuelles seront effacées)')) return;
+		await fetch(`${API}/api/admin/reset-seed`, { method: 'POST' });
+		await load();
+		showToast('Données de démo rechargées ✓');
 	}
 
 	onMount(load);
@@ -316,11 +364,24 @@
 				<input type="text" bind:value={newPerson.first_name} placeholder="Prénom" />
 				<input type="text" bind:value={newPerson.relation} placeholder="Lien (ex: ton fils)" />
 			</div>
-			<textarea bind:value={newPerson.message} rows="2" placeholder="Message rassurant..."></textarea>
+			<textarea bind:value={newPerson.message} rows="2" placeholder="Message rassurant (ex: Je suis dans la maison ou au travail. Je reviens toujours.)"></textarea>
 			<label class="checkbox">
 				<input type="checkbox" bind:checked={newPerson.is_primary_caregiver} />
-				Aidant principal (photo affichée en premier)
+				Aidant principal (affiché en premier sur l'écran)
 			</label>
+
+			<!-- Sélection photo -->
+			<label class="field-label">Photo (optionnel — peut être ajoutée après)</label>
+			<label class="photo-upload-zone">
+				{#if photoPreview}
+					<img src={photoPreview} alt="aperçu" class="photo-preview" />
+					<span class="photo-change">Changer la photo</span>
+				{:else}
+					<span class="photo-placeholder">📷 Choisir une photo</span>
+				{/if}
+				<input type="file" accept="image/*" onchange={onPhotoSelected} class="hidden-input" />
+			</label>
+
 			<button class="primary" onclick={addPerson} disabled={!newPerson.first_name.trim()}>Ajouter</button>
 		</section>
 
@@ -329,9 +390,49 @@
 			{#if people.length === 0}
 				<p class="empty">Aucun proche.</p>
 			{:else}
-				<ul class="list">
-					{#each people as p}
-						<li><strong>{p.first_name}</strong> — {p.relation} {p.is_primary_caregiver ? '⭐' : ''}</li>
+				<ul class="people-list">
+					{#each people as person}
+						<li class="person-item">
+							<!-- Photo -->
+							<div class="person-avatar-wrap">
+								{#if person.photo_path}
+									<img src="{API}{person.photo_path}" alt={person.first_name} class="person-avatar" />
+								{:else}
+									<div class="person-avatar-empty">
+										{person.first_name[0]}
+									</div>
+								{/if}
+							</div>
+
+							<!-- Info -->
+							<div class="person-details">
+								<strong>{person.first_name}</strong>
+								{#if person.is_primary_caregiver}<span class="badge">⭐ principal</span>{/if}
+								<div class="person-relation-text">{person.relation}</div>
+								{#if person.next_visit}
+									<div class="person-visit">Prochaine visite : {person.next_visit}</div>
+								{/if}
+							</div>
+
+							<!-- Actions -->
+							<div class="person-actions">
+								<label class="photo-btn" title="Changer la photo">
+									📷
+									<input
+										type="file"
+										accept="image/*"
+										class="hidden-input"
+										onchange={async (e) => {
+											const f = (e.target as HTMLInputElement).files?.[0];
+											if (!f) return;
+											pendingPhoto = f;
+											await uploadPhotoForPerson(person.id);
+										}}
+									/>
+								</label>
+								<button class="del" onclick={() => deletePerson(person.id)} title="Supprimer">✕</button>
+							</div>
+						</li>
 					{/each}
 				</ul>
 			{/if}
@@ -341,9 +442,17 @@
 	{#if activeTab === 'maison'}
 		<section class="card">
 			<h2>Informations de la maison</h2>
-			<input type="text" bind:value={household.display_name} placeholder="Nom affiché (ex: chez Gaëtan)" />
-			<textarea bind:value={household.reassurance_message} rows="3" placeholder="Message rassurant principal"></textarea>
+			<label class="field-label">Nom affiché sur l'écran</label>
+			<input type="text" bind:value={household.display_name} placeholder="ex: chez Gaëtan" />
+			<label class="field-label">Message rassurant principal</label>
+			<textarea bind:value={household.reassurance_message} rows="3" placeholder="Tu es chez Gaëtan, ton fils. Tu es en sécurité."></textarea>
 			<button class="primary" onclick={saveHousehold}>Enregistrer</button>
+		</section>
+
+		<section class="card danger-zone">
+			<h2>Données de démonstration</h2>
+			<p class="hint">Recharge les exemples de départ (Martine, Gaëtan, Sophie, événements et questions types). Les données actuelles seront effacées.</p>
+			<button class="btn-danger" onclick={resetSeed}>↺ Remettre les données de démo</button>
 		</section>
 	{/if}
 </div>
@@ -531,6 +640,106 @@
 	.event-time { color: #555; font-weight: 400; }
 	.event-meta { font-size: 0.85rem; color: #777; margin-top: 0.2rem; }
 	.rec-end { color: #999; }
+
+	/* ── Upload photo ─────────────────────────────────────── */
+	.hidden-input { display: none; }
+
+	.photo-upload-zone {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		border: 2px dashed #ddd;
+		border-radius: 0.75rem;
+		padding: 1rem;
+		cursor: pointer;
+		margin-bottom: 0.75rem;
+		transition: border-color 0.2s;
+		min-height: 80px;
+	}
+
+	.photo-upload-zone:hover { border-color: #1a1a2e; }
+
+	.photo-preview {
+		width: 80px;
+		height: 80px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 3px solid #ffd700;
+		margin-bottom: 0.4rem;
+	}
+
+	.photo-placeholder { font-size: 1.1rem; color: #888; }
+	.photo-change { font-size: 0.85rem; color: #555; }
+
+	/* ── Liste proches ────────────────────────────────────── */
+	.people-list { list-style: none; padding: 0; margin: 0; }
+
+	.person-item {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		padding: 0.75rem 0;
+		border-bottom: 1px solid #eee;
+	}
+
+	.person-avatar-wrap { flex-shrink: 0; }
+
+	.person-avatar {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		object-fit: cover;
+		border: 3px solid #ffd700;
+	}
+
+	.person-avatar-empty {
+		width: 56px;
+		height: 56px;
+		border-radius: 50%;
+		background: #1a1a2e;
+		color: #ffd700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-size: 1.5rem;
+		font-weight: 700;
+	}
+
+	.person-details { flex: 1; min-width: 0; }
+	.badge { background: #ffd700; color: #1a1a2e; font-size: 0.75rem; padding: 0.1rem 0.4rem; border-radius: 1rem; margin-left: 0.4rem; font-weight: 600; }
+	.person-relation-text { font-size: 0.9rem; color: #555; }
+	.person-visit { font-size: 0.8rem; color: #888; margin-top: 0.1rem; }
+
+	.person-actions { display: flex; gap: 0.4rem; flex-shrink: 0; }
+
+	.photo-btn {
+		background: #f0f4ff;
+		border: 1px solid #ddd;
+		color: #444;
+		padding: 0.4rem 0.6rem;
+		border-radius: 0.4rem;
+		cursor: pointer;
+		font-size: 1rem;
+	}
+
+	/* ── Zone danger ──────────────────────────────────────── */
+	.danger-zone { border: 1px solid #fcc; }
+	.danger-zone h2 { color: #c00; }
+
+	.btn-danger {
+		width: 100%;
+		padding: 0.75rem;
+		background: white;
+		color: #c00;
+		border: 2px solid #c00;
+		border-radius: 0.5rem;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+	}
+
+	.btn-danger:hover { background: #fee; }
 
 	.toast {
 		position: fixed;

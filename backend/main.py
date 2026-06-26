@@ -1,7 +1,6 @@
 import os
 import asyncio
 from datetime import datetime, date
-from typing import Optional
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
@@ -18,6 +17,8 @@ MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    os.makedirs(f"{MEDIA_DIR}/photos", exist_ok=True)
+    os.makedirs(f"{MEDIA_DIR}/videos", exist_ok=True)
     init_db()
     _seed_if_empty()
     yield
@@ -34,7 +35,6 @@ app.add_middleware(
 
 app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 
-# WebSocket connections pool
 _ws_clients: list[WebSocket] = []
 
 
@@ -49,12 +49,17 @@ async def _broadcast(data: dict):
         _ws_clients.remove(ws)
 
 
+# ── Seed ──────────────────────────────────────────────────────────────────────
+
 def _seed_if_empty():
-    """Insert demo data on first run."""
     from database import engine
     with Session(engine) as s:
         if s.exec(select(CareRecipient)).first():
             return
+
+        today = date.today().isoformat()
+        next_monday = _next_weekday(0)
+
         s.add(CareRecipient(
             first_name="Martine",
             reassurance_message="Tu es en sécurité. Gaëtan s'occupe de toi.",
@@ -69,29 +74,77 @@ def _seed_if_empty():
             message="Je suis dans la maison ou au travail. Je reviens toujours.",
             is_primary_caregiver=True,
         ))
-        s.add(FAQ(
-            question="Est-ce que je rentre chez moi ?",
-            answer="Tu es chez Gaëtan pour être accompagnée. Tu es en sécurité ici.",
-            display_order=0,
+        s.add(Person(
+            first_name="Sophie",
+            relation="ta sœur",
+            message="Je pense à toi. Je viens te voir dimanche.",
+            next_visit="dimanche après-midi",
         ))
-        s.add(FAQ(
-            question="Que vais-je faire aujourd'hui ?",
-            answer="Aujourd'hui tu restes à la maison. Il n'y a rien à préparer.",
-            display_order=1,
+
+        # Événements récurrents d'exemple
+        s.add(Event(
+            title="Kiné",
+            event_date=next_monday,
+            event_time="14:00",
+            recurrence="weekly:0,2",  # lundi et mercredi
+            message_before="Le kiné vient cet après-midi à 14 h. Tu n'as rien à préparer.",
+            message_during="Le kiné est là. Gaëtan lui ouvrira la porte.",
+            message_after="Le kiné est passé. Tout s'est bien passé.",
         ))
+        s.add(Event(
+            title="Déjeuner",
+            event_date=today,
+            event_time="12:30",
+            recurrence="daily",
+            message_before="Le déjeuner est prêt à 12 h 30.",
+            message_during="C'est l'heure du déjeuner.",
+            message_after="Tu as bien déjeuné.",
+        ))
+        s.add(Event(
+            title="Appel de Sophie",
+            event_date=today,
+            event_time="15:00",
+            recurrence="weekly:6",  # dimanche
+            message_before="Sophie va appeler cet après-midi vers 15 h.",
+            message_during="Sophie t'appelle ! Elle pense à toi.",
+            message_after="Tu as parlé avec Sophie. Elle reviendra dimanche prochain.",
+        ))
+
+        # FAQ
+        for order, (q, a) in enumerate([
+            ("Est-ce que je rentre chez moi ?",
+             "Tu es chez Gaëtan pour être accompagnée. Tu es en sécurité ici."),
+            ("Quand revient Sophie ?",
+             "Sophie vient te voir dimanche après-midi. Elle pense à toi."),
+            ("Que vais-je faire aujourd'hui ?",
+             "Aujourd'hui tu restes à la maison. Il n'y a rien à préparer."),
+            ("Où est Gaëtan ?",
+             "Gaëtan est dans la maison ou au travail. Il revient toujours."),
+            ("Est-ce que je dors ici cette nuit ?",
+             "Oui, ta chambre est prête. Tu dors ici, tu es bien installée."),
+        ]):
+            s.add(FAQ(question=q, answer=a, display_order=order))
+
         s.commit()
+
+
+def _next_weekday(weekday: int) -> str:
+    """Retourne la prochaine date d'un jour de la semaine (0=lundi)."""
+    d = date.today()
+    days_ahead = weekday - d.weekday()
+    if days_ahead <= 0:
+        days_ahead += 7
+    return (d.replace(day=d.day + days_ahead)).isoformat()
 
 
 # ── Résolution des récurrences ────────────────────────────────────────────────
 
 def _event_matches_date(event: Event, d: date) -> bool:
-    """Vérifie si un événement (ponctuel ou récurrent) tombe à la date d."""
     rec = event.recurrence or "none"
 
     if rec == "none" or not rec:
         return event.event_date == d.isoformat()
 
-    # Vérifier que la date de début est passée et la date de fin pas encore atteinte
     if event.event_date and d.isoformat() < event.event_date:
         return False
     if event.recurrence_end and d.isoformat() > event.recurrence_end:
@@ -99,15 +152,11 @@ def _event_matches_date(event: Event, d: date) -> bool:
 
     if rec == "daily":
         return True
-
     if rec.startswith("weekly:"):
-        # "weekly:0,2,4"  → lundi=0 … dimanche=6 (isoweekday: lun=1…dim=7)
         days = [int(x) for x in rec.split(":")[1].split(",")]
-        return (d.isoweekday() - 1) in days  # isoweekday lun=1 → 0-indexed
-
+        return (d.isoweekday() - 1) in days
     if rec.startswith("monthly:"):
-        day_of_month = int(rec.split(":")[1])
-        return d.day == day_of_month
+        return d.day == int(rec.split(":")[1])
 
     return False
 
@@ -118,19 +167,15 @@ def _get_events_for_date(session: Session, d: date) -> list[Event]:
     return sorted(matching, key=lambda e: e.event_time or "")
 
 
-# ── Display endpoint (écran patient) ──────────────────────────────────────────
+# ── Display ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/display")
 def get_display_state(session: Session = Depends(get_session)):
-    """Tout ce dont l'écran a besoin en un seul appel."""
     recipient = session.exec(select(CareRecipient)).first()
     household = session.exec(select(Household)).first()
     people = session.exec(select(Person)).all()
     faqs = session.exec(select(FAQ).where(FAQ.active == True).order_by(FAQ.display_order)).all()
-
-    today = date.today()
-    events = _get_events_for_date(session, today)
-
+    events = _get_events_for_date(session, date.today())
     daily_msg = session.exec(
         select(DailyMessage).order_by(DailyMessage.created_at.desc())
     ).first()
@@ -146,7 +191,7 @@ def get_display_state(session: Session = Depends(get_session)):
     }
 
 
-# ── WebSocket (mises à jour temps réel) ───────────────────────────────────────
+# ── WebSocket ──────────────────────────────────────────────────────────────────
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
@@ -159,6 +204,20 @@ async def websocket_endpoint(websocket: WebSocket):
     except WebSocketDisconnect:
         if websocket in _ws_clients:
             _ws_clients.remove(websocket)
+
+
+# ── Seed reset (dev) ───────────────────────────────────────────────────────────
+
+@app.post("/api/admin/reset-seed")
+async def reset_seed(session: Session = Depends(get_session)):
+    """Vide la base et recharge les données de démo."""
+    for model in [DailyMessage, Event, FAQ, Person, Household, CareRecipient]:
+        for item in session.exec(select(model)).all():
+            session.delete(item)
+    session.commit()
+    _seed_if_empty()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True}
 
 
 # ── Household ──────────────────────────────────────────────────────────────────
@@ -182,14 +241,11 @@ async def update_household(data: dict, session: Session = Depends(get_session)):
     return h
 
 
-# ── Daily message (bouton aidant "message immédiat") ──────────────────────────
+# ── Daily message ──────────────────────────────────────────────────────────────
 
 @app.post("/api/daily-message")
 async def post_daily_message(data: dict, session: Session = Depends(get_session)):
-    msg = DailyMessage(
-        content=data["content"],
-        author=data.get("author"),
-    )
+    msg = DailyMessage(content=data["content"], author=data.get("author"))
     session.add(msg)
     session.commit()
     session.refresh(msg)
@@ -270,17 +326,40 @@ async def create_person(data: dict, session: Session = Depends(get_session)):
     return person
 
 
+@app.put("/api/people/{person_id}")
+async def update_person(person_id: int, data: dict, session: Session = Depends(get_session)):
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=404)
+    for k, v in data.items():
+        if hasattr(person, k):
+            setattr(person, k, v)
+    session.add(person)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return person
+
+
+@app.delete("/api/people/{person_id}")
+async def delete_person(person_id: int, session: Session = Depends(get_session)):
+    person = session.get(Person, person_id)
+    if not person:
+        raise HTTPException(status_code=404)
+    session.delete(person)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True}
+
+
 # ── Upload photo ───────────────────────────────────────────────────────────────
 
 @app.post("/api/upload/photo")
 async def upload_photo(file: UploadFile = File(...)):
-    os.makedirs(f"{MEDIA_DIR}/photos", exist_ok=True)
     filename = f"{datetime.now().timestamp()}_{file.filename}"
     path = f"{MEDIA_DIR}/photos/{filename}"
     content = await file.read()
     with open(path, "wb") as f:
         f.write(content)
-    # Resize to max 1920px wide
     try:
         img = Image.open(path)
         img.thumbnail((1920, 1920))
