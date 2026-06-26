@@ -82,6 +82,9 @@ class Settings(SQLModel, table=True):
     # Home Assistant
     ha_url: str = ""
     ha_token: str = ""
+    # Météo
+    latitude: float = 48.8566
+    longitude: float = 2.3522
 
 
 class Photo(SQLModel, table=True):

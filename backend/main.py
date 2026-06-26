@@ -224,6 +224,57 @@ def _get_events_for_date(session: Session, d: date) -> list[Event]:
 
 # ── Display ────────────────────────────────────────────────────────────────────
 
+_WMO_ICONS = {
+    0: "☀️", 1: "🌤️", 2: "⛅", 3: "☁️",
+    45: "🌫️", 48: "🌫️",
+    51: "🌦️", 53: "🌦️", 55: "🌧️",
+    61: "🌧️", 63: "🌧️", 65: "🌧️",
+    71: "🌨️", 73: "🌨️", 75: "❄️",
+    80: "🌦️", 81: "🌧️", 82: "⛈️",
+    95: "⛈️", 96: "⛈️", 99: "⛈️",
+}
+_WMO_LABELS = {
+    0: "Ensoleillé", 1: "Peu nuageux", 2: "Nuageux", 3: "Couvert",
+    45: "Brouillard", 48: "Brouillard",
+    51: "Bruine", 53: "Bruine", 55: "Bruine forte",
+    61: "Pluie faible", 63: "Pluie", 65: "Forte pluie",
+    71: "Neige faible", 73: "Neige", 75: "Forte neige",
+    80: "Averses", 81: "Averses", 82: "Averses fortes",
+    95: "Orage", 96: "Orage", 99: "Orage violent",
+}
+_JOURS_COURT = ["Lun", "Mar", "Mer", "Jeu", "Ven", "Sam", "Dim"]
+
+
+async def _fetch_weather(settings: Settings) -> list[dict]:
+    try:
+        url = (
+            f"https://api.open-meteo.com/v1/forecast"
+            f"?latitude={settings.latitude}&longitude={settings.longitude}"
+            f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
+            f"&timezone=auto&forecast_days=7"
+        )
+        async with httpx.AsyncClient(timeout=8) as client:
+            r = await client.get(url)
+            if r.status_code != 200:
+                return []
+            data = r.json()["daily"]
+            result = []
+            for i, date_str in enumerate(data["time"]):
+                code = data["weathercode"][i]
+                d = datetime.fromisoformat(date_str)
+                result.append({
+                    "date": date_str,
+                    "day": "Auj." if i == 0 else _JOURS_COURT[d.weekday()],
+                    "icon": _WMO_ICONS.get(code, "🌡️"),
+                    "label": _WMO_LABELS.get(code, ""),
+                    "tmax": round(data["temperature_2m_max"][i]),
+                    "tmin": round(data["temperature_2m_min"][i]),
+                })
+            return result
+    except Exception:
+        return []
+
+
 async def _fetch_ha_states(settings: Settings, entities: list[HAEntity]) -> list[dict]:
     headers = {"Authorization": f"Bearer {settings.ha_token}"}
     base = settings.ha_url.rstrip("/")
@@ -261,6 +312,7 @@ async def get_display_state(session: Session = Depends(get_session)):
 
     photos = session.exec(select(Photo).order_by(Photo.display_order, Photo.uploaded_at)).all()
     ha_entities = session.exec(select(HAEntity).order_by(HAEntity.display_order)).all()
+    weather = await _fetch_weather(settings)
     ha_states = []
     if ha_entities and settings.ha_url and settings.ha_token:
         ha_states = await _fetch_ha_states(settings, ha_entities)
@@ -276,6 +328,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         "night_end": settings.night_end,
         "ha_states": ha_states,
         "photos": [p.model_dump() for p in photos],
+        "weather": weather,
         "server_time": datetime.now().isoformat(),
     }
 

@@ -116,6 +116,20 @@
 		</section>
 
 	{:else}
+		<!-- MÉTÉO 7 JOURS -->
+		{#if $displayState?.weather?.length}
+			<section class="weather-block">
+				{#each $displayState.weather as day, i}
+					<div class="weather-day" class:today={i === 0}>
+						<span class="weather-day-name">{day.day}</span>
+						<span class="weather-icon">{day.icon}</span>
+						<span class="weather-tmax">{day.tmax}°</span>
+						<span class="weather-tmin">{day.tmin}°</span>
+					</div>
+				{/each}
+			</section>
+		{/if}
+
 		<!-- LIEU & RÉASSURANCE -->
 		<section class="location-block">
 			{#if $displayState?.household}
@@ -313,6 +327,49 @@
 
 	.events-block .event::before { content: '• '; color: #ffd700; }
 	.events-block .event.active { color: #ffd700; font-weight: 600; }
+
+	.weather-block {
+		display: flex;
+		gap: 0.5rem;
+		overflow: hidden;
+	}
+
+	.weather-day {
+		flex: 1;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 0.15rem;
+		background: rgba(255,255,255,0.06);
+		border-radius: 0.75rem;
+		padding: 0.5rem 0.3rem;
+	}
+
+	.weather-day.today {
+		background: rgba(255, 215, 0, 0.12);
+		border: 1px solid rgba(255, 215, 0, 0.3);
+	}
+
+	.weather-day-name {
+		font-size: clamp(0.7rem, 1.2vw, 1rem);
+		color: #a0c4ff;
+		font-weight: 600;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.weather-icon { font-size: clamp(1.2rem, 2.5vw, 2rem); }
+
+	.weather-tmax {
+		font-size: clamp(0.9rem, 1.8vw, 1.4rem);
+		font-weight: 700;
+		color: #ffd700;
+	}
+
+	.weather-tmin {
+		font-size: clamp(0.75rem, 1.3vw, 1.1rem);
+		color: #888;
+	}
 
 	.ha-block {
 		display: flex;

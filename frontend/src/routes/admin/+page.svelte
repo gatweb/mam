@@ -45,6 +45,8 @@
 		night_end: '07:00',
 		ha_url: '',
 		ha_token: '',
+		latitude: 48.8566,
+		longitude: 2.3522,
 	});
 	let testingNotif = $state(false);
 	let testingHa = $state(false);
@@ -841,6 +843,25 @@
 			<label class="field-label">Message rassurant principal</label>
 			<textarea bind:value={household.reassurance_message} rows="3" placeholder="Tu es chez Gaëtan, ton fils. Tu es en sécurité."></textarea>
 			<button class="primary" onclick={saveHousehold}>Enregistrer</button>
+		</section>
+
+		<section class="card">
+			<h2>🌤️ Météo</h2>
+			<p class="hint">La météo de la semaine s'affiche sur l'écran. Entrez les coordonnées GPS de chez vous (Open-Meteo, gratuit, sans compte).</p>
+			<div class="row">
+				<div>
+					<label class="field-label">Latitude</label>
+					<input type="number" step="0.0001" bind:value={settings.latitude} placeholder="48.8566" />
+				</div>
+				<div>
+					<label class="field-label">Longitude</label>
+					<input type="number" step="0.0001" bind:value={settings.longitude} placeholder="2.3522" />
+				</div>
+			</div>
+			<p class="hint" style="margin-top:-0.3rem">
+				Trouvez vos coordonnées sur <strong>maps.google.com</strong> → clic droit sur votre adresse → copier les coordonnées.
+			</p>
+			<button class="primary" onclick={saveSettings}>Enregistrer</button>
 		</section>
 
 		<section class="card danger-zone">
