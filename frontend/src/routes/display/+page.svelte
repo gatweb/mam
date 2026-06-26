@@ -44,17 +44,12 @@
 	onMount(() => {
 		fetchState();
 		connectWs();
-
-		clockInterval = setInterval(() => {
-			now = new Date();
-		}, 10000);
-
+		clockInterval = setInterval(() => { now = new Date(); }, 10000);
 		faqInterval = setInterval(() => {
 			if ($displayState?.faqs?.length) {
 				faqIndex = (faqIndex + 1) % $displayState.faqs.length;
 			}
 		}, 12000);
-
 		photoInterval = setInterval(() => {
 			const photos = $displayState?.photos ?? [];
 			if (photos.length > 1) {
@@ -62,7 +57,7 @@
 				setTimeout(() => {
 					photoIndex = (photoIndex + 1) % photos.length;
 					photoVisible = true;
-				}, 800);
+				}, 700);
 			}
 		}, 18000);
 	});
@@ -75,9 +70,7 @@
 	});
 
 	function _formatHaState(state: string, entityId: string): string {
-		if (entityId.startsWith('device_tracker.')) {
-			return state === 'home' ? 'À la maison' : 'Absent';
-		}
+		if (entityId.startsWith('device_tracker.')) return state === 'home' ? 'À la maison' : 'Absent';
 		if (state === 'on') return 'Ouvert';
 		if (state === 'off') return 'Fermé';
 		const n = parseFloat(state);
@@ -86,147 +79,182 @@
 	}
 
 	const isNight = $derived(moment === 'nuit');
-	const isSundown = $derived(moment === 'soir');
 	const currentFaq = $derived($displayState?.faqs?.[faqIndex] ?? null);
 	const currentPhoto = $derived($displayState?.photos?.[photoIndex] ?? null);
-	const primaryPerson = $derived($displayState?.people?.find(p => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
+	const primaryPerson = $derived($displayState?.people?.find((p: any) => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
+	const todayWeather = $derived($displayState?.weather?.[0] ?? null);
 </script>
 
 <svelte:head>
 	<title>Snoozolène</title>
+	<link rel="preconnect" href="https://fonts.googleapis.com" />
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
+	<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet" />
 </svelte:head>
 
-<main class="screen" class:night={isNight} class:sundown={isSundown && !isNight}>
+<main class="screen {moment}" class:night={isNight}>
 
-	<!-- HEURE & DATE -->
-	<section class="time-block">
-		<div class="clock">{formatTime(now)}</div>
-		<div class="date">{formatDate(now).toUpperCase()}</div>
-		<div class="moment">{getMomentLabel(moment)}</div>
-	</section>
-
-	<!-- MODE NUIT : affichage minimal -->
-	{#if isNight}
-		<section class="night-message">
-			{#if $displayState?.household}
-				<p>Tu es {$displayState.household.display_name}.</p>
-			{/if}
-			<p>Tout va bien.</p>
-			<p>Tu peux te recoucher.</p>
-		</section>
-
-	{:else}
-		<!-- MÉTÉO 7 JOURS -->
-		{#if $displayState?.weather?.length}
-			<section class="weather-block">
-				{#each $displayState.weather as day, i}
-					<div class="weather-day" class:today={i === 0}>
-						<span class="weather-day-name">{day.day}</span>
-						<span class="weather-icon">{day.icon}</span>
-						<span class="weather-tmax">{day.tmax}°</span>
-						<span class="weather-tmin">{day.tmin}°</span>
-					</div>
-				{/each}
-			</section>
-		{/if}
-
-		<!-- LIEU & RÉASSURANCE -->
-		<section class="location-block">
-			{#if $displayState?.household}
-				<p class="location">{$displayState.household.reassurance_message}</p>
-			{/if}
-		</section>
-
-		<!-- MESSAGE DU JOUR (envoyé par l'aidant) -->
-		{#if $displayState?.daily_message}
-			<section class="daily-message">
-				<p>{$displayState.daily_message.content}</p>
-				{#if $displayState.daily_message.author}
-					<span class="author">— {$displayState.daily_message.author}</span>
-				{/if}
-			</section>
-		{/if}
-
-		<!-- ÉVÉNEMENTS DU JOUR -->
-		{#if $displayState?.events_today?.length}
-			<section class="events-block">
-				<h2>Aujourd'hui :</h2>
-				<ul>
-					{#each $displayState.events_today as event}
-						{@const status = eventStatus(event.event_time, now)}
-						<li class="event" class:active={status === 'during'}>
-							{#if status === 'before' && event.message_before}
-								{event.message_before}
-							{:else if status === 'during' && event.message_during}
-								{event.message_during}
-							{:else if status === 'after' && event.message_after}
-								{event.message_after}
-							{:else}
-								{event.title}{event.event_time ? ` à ${event.event_time.replace(':', ' h ')}` : ''}
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/if}
-
-		<!-- Capteurs Home Assistant -->
-		{#if $displayState?.ha_states?.length}
-			<section class="ha-block">
-				{#each $displayState.ha_states as sensor}
-					<div class="ha-sensor">
-						<span class="ha-icon">{sensor.icon}</span>
-						<span class="ha-value">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
-						<span class="ha-label">{sensor.label}</span>
-					</div>
-				{/each}
-			</section>
-		{/if}
-
-		<!-- FAQ défilante -->
-		{#if currentFaq}
-			<section class="faq-block">
-				<p class="faq-answer">{currentFaq.answer}</p>
-			</section>
-		{/if}
-
-		<!-- DIAPORAMA FAMILLE -->
-		{#if currentPhoto}
-			<section class="slideshow-block" class:visible={photoVisible}>
-				<img src="{API}{currentPhoto.path}" alt={currentPhoto.caption ?? 'Photo famille'} class="slideshow-img" />
-				{#if currentPhoto.caption}
-					<p class="slideshow-caption">{currentPhoto.caption}</p>
-				{/if}
-			</section>
-		{/if}
-
-		<!-- PHOTO + NOM du proche principal -->
-		{#if primaryPerson}
-			<section class="person-block">
-				{#if primaryPerson.photo_path}
-					<img src="{API}{primaryPerson.photo_path}" alt={primaryPerson.first_name} class="person-photo" />
-				{/if}
-				<div class="person-info">
-					<span class="person-name">{primaryPerson.first_name}</span>
-					<span class="person-relation">{primaryPerson.relation}</span>
-					{#if primaryPerson.message}
-						<span class="person-message">{primaryPerson.message}</span>
-					{/if}
-				</div>
-			</section>
-		{/if}
+	<!-- Icône météo en filigrane -->
+	{#if todayWeather && !isNight}
+		<div class="weather-watermark">{todayWeather.icon}</div>
 	{/if}
 
+	{#if isNight}
+		<!-- ══════════════ MODE NUIT ══════════════ -->
+		<div class="night-screen">
+			<div class="night-clock">{formatTime(now)}</div>
+			<div class="night-date">{formatDate(now).toUpperCase()}</div>
+			{#if $displayState?.household}
+				<p class="night-msg">{$displayState.household.reassurance_message}</p>
+			{/if}
+		</div>
+
+	{:else}
+		<!-- ══════════════ MODE JOUR ══════════════ -->
+
+		<!-- BANDEAU MÉTÉO (top) -->
+		{#if $displayState?.weather?.length}
+			<header class="weather-strip">
+				{#each $displayState.weather as day, i}
+					<div class="wday" class:wday-today={i === 0}>
+						<span class="wday-name">{day.day}</span>
+						<span class="wday-icon">{day.icon}</span>
+						<span class="wday-max">{day.tmax}°</span>
+						<span class="wday-min">{day.tmin}°</span>
+					</div>
+				{/each}
+				<div class="moment-pill">{getMomentLabel(moment)}</div>
+			</header>
+		{:else}
+			<header class="weather-strip weather-strip--empty">
+				<div class="moment-pill">{getMomentLabel(moment)}</div>
+			</header>
+		{/if}
+
+		<!-- GRILLE PRINCIPALE -->
+		<div class="main-grid">
+
+			<!-- ── COLONNE GAUCHE ── -->
+			<section class="left-col">
+
+				<!-- Horloge + date -->
+				<div class="clock-block glass">
+					<div class="clock">{formatTime(now)}</div>
+					<div class="date-line">{formatDate(now).toUpperCase()}</div>
+					{#if $displayState?.household}
+						<div class="reassurance">{$displayState.household.reassurance_message}</div>
+					{/if}
+				</div>
+
+				<!-- Message du jour -->
+				{#if $displayState?.daily_message}
+					<div class="daily-card glass">
+						<span class="daily-icon">✉️</span>
+						<div class="daily-body">
+							<p class="daily-text">{$displayState.daily_message.content}</p>
+							{#if $displayState.daily_message.author}
+								<span class="daily-author">— {$displayState.daily_message.author}</span>
+							{/if}
+						</div>
+					</div>
+				{/if}
+
+				<!-- Événements du jour -->
+				{#if $displayState?.events_today?.length}
+					<div class="events-card glass">
+						<p class="events-title">Aujourd'hui</p>
+						<ul class="events-list">
+							{#each $displayState.events_today.slice(0, 3) as event}
+								{@const status = eventStatus(event.event_time, now)}
+								<li class="event-item" class:event-active={status === 'during'}>
+									<span class="event-dot"></span>
+									<span class="event-text">
+										{#if status === 'before' && event.message_before}
+											{event.message_before}
+										{:else if status === 'during' && event.message_during}
+											{event.message_during}
+										{:else if status === 'after' && event.message_after}
+											{event.message_after}
+										{:else}
+											{event.title}{event.event_time ? ` · ${event.event_time.replace(':', 'h')}` : ''}
+										{/if}
+									</span>
+								</li>
+							{/each}
+						</ul>
+					</div>
+				{/if}
+
+			</section>
+
+			<!-- ── COLONNE DROITE : photo ── -->
+			<section class="right-col">
+				{#if currentPhoto}
+					<div class="slideshow" class:visible={photoVisible}>
+						<img src="{API}{currentPhoto.path}" alt={currentPhoto.caption ?? ''} class="slide-img" />
+						{#if currentPhoto.caption}
+							<p class="slide-caption">{currentPhoto.caption}</p>
+						{/if}
+					</div>
+				{:else if primaryPerson?.photo_path}
+					<div class="slideshow visible">
+						<img src="{API}{primaryPerson.photo_path}" alt={primaryPerson.first_name} class="slide-img" />
+						<p class="slide-caption">{primaryPerson.first_name} · {primaryPerson.relation}</p>
+					</div>
+				{/if}
+			</section>
+
+		</div>
+
+		<!-- BARRE DU BAS -->
+		<footer class="bottom-bar">
+
+			<!-- Proche principal -->
+			{#if primaryPerson}
+				<div class="person-chip glass">
+					{#if primaryPerson.photo_path}
+						<img src="{API}{primaryPerson.photo_path}" alt={primaryPerson.first_name} class="person-avatar" />
+					{:else}
+						<div class="person-avatar person-initial">{primaryPerson.first_name[0]}</div>
+					{/if}
+					<div class="person-info">
+						<span class="person-name">{primaryPerson.first_name}</span>
+						<span class="person-rel">{primaryPerson.relation}</span>
+					</div>
+				</div>
+			{/if}
+
+			<!-- Capteurs HA -->
+			{#if $displayState?.ha_states?.length}
+				<div class="ha-chips">
+					{#each $displayState.ha_states as sensor}
+						<div class="ha-chip glass">
+							<span class="ha-chip-icon">{sensor.icon}</span>
+							<span class="ha-chip-val">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
+							<span class="ha-chip-label">{sensor.label}</span>
+						</div>
+					{/each}
+				</div>
+			{/if}
+
+			<!-- FAQ rotative -->
+			{#if currentFaq}
+				<div class="faq-ticker glass">
+					<span class="faq-q">💬</span>
+					<span class="faq-text">{currentFaq.answer}</span>
+				</div>
+			{/if}
+
+		</footer>
+
+	{/if}
 </main>
 
+<!-- Overlay appel vidéo -->
 {#if videoCall}
 	<div class="video-overlay">
 		<div class="video-header">
-			{#if videoCall.personName}
-				<span class="video-caller">📞 Appel de {videoCall.personName}</span>
-			{:else}
-				<span class="video-caller">📞 Appel vidéo</span>
-			{/if}
+			<span class="video-caller">📞 {videoCall.personName ? `Appel de ${videoCall.personName}` : 'Appel vidéo'}</span>
 		</div>
 		<iframe
 			src="https://meet.jit.si/{videoCall.room}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startWithAudioMuted=false&userInfo.displayName=Martine"
@@ -237,254 +265,375 @@
 {/if}
 
 <style>
+	@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&display=swap');
+
 	:global(body) {
 		margin: 0;
 		padding: 0;
 		overflow: hidden;
-		font-family: 'Segoe UI', system-ui, sans-serif;
-		background: #1a1a2e;
-		color: #f0f0f0;
+		font-family: 'Nunito', system-ui, sans-serif;
+		background: #0f172a;
+		color: #f0f4ff;
 	}
 
+	/* ── Fonds dynamiques par moment ─────────────────────── */
 	.screen {
-		display: grid;
-		grid-template-rows: auto auto auto 1fr auto auto;
-		gap: 1.5rem;
 		height: 100vh;
-		padding: 2.5rem 3rem;
-		box-sizing: border-box;
-		background: #1a1a2e;
-		transition: background 1s ease;
-	}
-
-	.screen.sundown { background: #2d1b00; }
-
-	.screen.night {
-		background: #080810;
-		display: flex;
-		flex-direction: column;
-		justify-content: center;
-		align-items: center;
-		gap: 2rem;
-	}
-
-	.clock {
-		font-size: clamp(5rem, 14vw, 10rem);
-		font-weight: 700;
-		color: #ffd700;
-		letter-spacing: 0.05em;
-		text-align: center;
-	}
-
-	.date {
-		font-size: clamp(1.8rem, 4vw, 3.5rem);
-		font-weight: 600;
-		color: #e0e0e0;
-		margin-top: 0.2rem;
-		text-align: center;
-	}
-
-	.moment {
-		font-size: clamp(1.4rem, 3vw, 2.5rem);
-		color: #a0c4ff;
-		letter-spacing: 0.2em;
-		margin-top: 0.3rem;
-		text-align: center;
-	}
-
-	.location-block .location {
-		font-size: clamp(1.6rem, 3.5vw, 3rem);
-		font-weight: 500;
-		color: #90ee90;
-		text-align: center;
-		margin: 0;
-	}
-
-	.daily-message {
-		background: rgba(255, 215, 0, 0.12);
-		border-left: 6px solid #ffd700;
-		border-radius: 0.5rem;
-		padding: 1rem 1.5rem;
-		font-size: clamp(1.4rem, 3vw, 2.2rem);
-	}
-
-	.daily-message p { margin: 0; }
-	.author { font-size: 0.8em; color: #ffd700; }
-
-	.events-block h2 {
-		font-size: clamp(1.3rem, 2.5vw, 2rem);
-		color: #a0c4ff;
-		margin: 0 0 0.5rem;
-	}
-
-	.events-block ul { list-style: none; padding: 0; margin: 0; }
-
-	.events-block .event {
-		font-size: clamp(1.3rem, 2.8vw, 2.2rem);
-		padding: 0.3rem 0;
-		color: #e0e0e0;
-	}
-
-	.events-block .event::before { content: '• '; color: #ffd700; }
-	.events-block .event.active { color: #ffd700; font-weight: 600; }
-
-	.weather-block {
-		display: flex;
-		gap: 0.5rem;
+		display: grid;
+		grid-template-rows: auto 1fr auto;
+		position: relative;
 		overflow: hidden;
+		transition: background 2s ease;
 	}
 
-	.weather-day {
-		flex: 1;
+	.screen.matin    { background: linear-gradient(145deg, #0f172a 0%, #1e3a5f 45%, #2d5986 100%); }
+	.screen.apres-midi { background: linear-gradient(145deg, #0c1e3a 0%, #163566 45%, #1e4d8c 100%); }
+	.screen.soir     { background: linear-gradient(145deg, #1a0a2e 0%, #3d1a4a 35%, #7a2e2e 65%, #b84a1a 100%); }
+	.screen.night,
+	.screen.nuit     { background: linear-gradient(145deg, #03040f 0%, #060818 100%); }
+
+	/* ── Filigrane météo ──────────────────────────────────── */
+	.weather-watermark {
+		position: absolute;
+		right: -2rem;
+		top: 50%;
+		transform: translateY(-50%);
+		font-size: clamp(12rem, 30vw, 22rem);
+		opacity: 0.04;
+		pointer-events: none;
+		user-select: none;
+		z-index: 0;
+		filter: blur(2px);
+	}
+
+	/* ── Glassmorphism ────────────────────────────────────── */
+	.glass {
+		background: rgba(255, 255, 255, 0.07);
+		backdrop-filter: blur(16px);
+		-webkit-backdrop-filter: blur(16px);
+		border: 1px solid rgba(255, 255, 255, 0.1);
+		border-radius: 1.2rem;
+	}
+
+	/* ── MÉTÉO STRIP ──────────────────────────────────────── */
+	.weather-strip {
+		display: flex;
+		align-items: center;
+		gap: 0.4rem;
+		padding: 0.5rem 1.5rem;
+		background: rgba(0, 0, 0, 0.2);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		z-index: 1;
+		position: relative;
+	}
+
+	.weather-strip--empty { justify-content: flex-end; }
+
+	.wday {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		gap: 0.15rem;
-		background: rgba(255,255,255,0.06);
-		border-radius: 0.75rem;
-		padding: 0.5rem 0.3rem;
+		padding: 0.25rem 0.6rem;
+		border-radius: 0.6rem;
+		gap: 0.05rem;
+		flex: 1;
+		max-width: 70px;
 	}
 
-	.weather-day.today {
-		background: rgba(255, 215, 0, 0.12);
+	.wday-today {
+		background: rgba(255, 215, 0, 0.15);
 		border: 1px solid rgba(255, 215, 0, 0.3);
 	}
 
-	.weather-day-name {
-		font-size: clamp(0.7rem, 1.2vw, 1rem);
-		color: #a0c4ff;
-		font-weight: 600;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-
-	.weather-icon { font-size: clamp(1.2rem, 2.5vw, 2rem); }
-
-	.weather-tmax {
-		font-size: clamp(0.9rem, 1.8vw, 1.4rem);
+	.wday-name {
+		font-size: clamp(0.6rem, 1vw, 0.8rem);
+		color: #94a3b8;
 		font-weight: 700;
-		color: #ffd700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
 	}
 
-	.weather-tmin {
-		font-size: clamp(0.75rem, 1.3vw, 1.1rem);
-		color: #888;
+	.wday-icon { font-size: clamp(1rem, 2vw, 1.5rem); }
+	.wday-max { font-size: clamp(0.75rem, 1.4vw, 1rem); font-weight: 800; color: #ffd700; }
+	.wday-min { font-size: clamp(0.6rem, 1vw, 0.8rem); color: #64748b; }
+
+	.moment-pill {
+		margin-left: auto;
+		background: rgba(160, 196, 255, 0.15);
+		border: 1px solid rgba(160, 196, 255, 0.25);
+		color: #a0c4ff;
+		font-size: clamp(0.65rem, 1.2vw, 0.9rem);
+		font-weight: 800;
+		letter-spacing: 0.15em;
+		padding: 0.3rem 0.9rem;
+		border-radius: 2rem;
+		white-space: nowrap;
 	}
 
-	.ha-block {
-		display: flex;
-		flex-wrap: wrap;
+	/* ── GRILLE PRINCIPALE ────────────────────────────────── */
+	.main-grid {
+		display: grid;
+		grid-template-columns: 1fr 38%;
 		gap: 1rem;
+		padding: 1rem 1.5rem;
+		min-height: 0;
+		z-index: 1;
+		position: relative;
 	}
 
-	.ha-sensor {
+	/* ── COLONNE GAUCHE ───────────────────────────────────── */
+	.left-col {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		background: rgba(255,255,255,0.07);
-		border-radius: 0.75rem;
-		padding: 0.6rem 1.2rem;
-		min-width: 100px;
+		gap: 0.7rem;
+		min-height: 0;
+		overflow: hidden;
 	}
 
-	.ha-icon { font-size: clamp(1.4rem, 2.5vw, 2rem); }
+	.clock-block {
+		padding: 1rem 1.5rem;
+		flex-shrink: 0;
+	}
 
-	.ha-value {
-		font-size: clamp(1.4rem, 3vw, 2.4rem);
+	.clock {
+		font-family: 'Playfair Display', serif;
+		font-size: clamp(4rem, 11vw, 8rem);
 		font-weight: 700;
 		color: #ffd700;
-		line-height: 1.1;
+		line-height: 1;
+		letter-spacing: -0.02em;
 	}
 
-	.ha-label {
-		font-size: clamp(0.8rem, 1.5vw, 1.2rem);
-		color: #a0c4ff;
-		margin-top: 0.2rem;
+	.date-line {
+		font-size: clamp(0.9rem, 2vw, 1.5rem);
+		font-weight: 600;
+		color: #cbd5e1;
+		letter-spacing: 0.08em;
+		margin-top: 0.1rem;
 	}
 
-	.faq-block {
-		text-align: center;
-		border-top: 1px solid rgba(255,255,255,0.1);
-		padding-top: 1rem;
+	.reassurance {
+		font-size: clamp(0.85rem, 1.6vw, 1.2rem);
+		color: #86efac;
+		font-weight: 600;
+		margin-top: 0.4rem;
 	}
 
-	.faq-answer {
-		font-size: clamp(1.3rem, 2.8vw, 2.2rem);
-		color: #d0d0d0;
-		font-style: italic;
+	/* Message du jour */
+	.daily-card {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.75rem;
+		padding: 0.75rem 1rem;
+		border-left: 3px solid #ffd700;
+		flex-shrink: 0;
+	}
+
+	.daily-icon { font-size: 1.3rem; flex-shrink: 0; margin-top: 0.1rem; }
+	.daily-body { flex: 1; min-width: 0; }
+	.daily-text {
 		margin: 0;
+		font-size: clamp(0.85rem, 1.7vw, 1.25rem);
+		font-weight: 600;
+		color: #f8f8f8;
+		line-height: 1.35;
+	}
+	.daily-author { font-size: 0.85em; color: #ffd700; }
+
+	/* Événements */
+	.events-card {
+		padding: 0.7rem 1rem;
+		flex-shrink: 0;
 	}
 
-	.slideshow-block {
+	.events-title {
+		font-size: clamp(0.7rem, 1.2vw, 0.9rem);
+		font-weight: 800;
+		color: #a0c4ff;
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		margin: 0 0 0.4rem;
+	}
+
+	.events-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.3rem; }
+
+	.event-item {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		font-size: clamp(0.85rem, 1.6vw, 1.2rem);
+		color: #e2e8f0;
+	}
+
+	.event-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: #475569;
+		flex-shrink: 0;
+		margin-top: 0.4em;
+	}
+
+	.event-active { color: #ffd700; font-weight: 700; }
+	.event-active .event-dot { background: #ffd700; box-shadow: 0 0 6px #ffd700; }
+
+	/* ── COLONNE DROITE : diaporama ───────────────────────── */
+	.right-col {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		min-height: 0;
+		position: relative;
+	}
+
+	.slideshow {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
 		gap: 0.5rem;
+		width: 100%;
+		height: 100%;
 		opacity: 0;
-		transition: opacity 0.8s ease;
+		transition: opacity 0.7s ease;
 	}
 
-	.slideshow-block.visible { opacity: 1; }
+	.slideshow.visible { opacity: 1; }
 
-	.slideshow-img {
-		max-height: clamp(180px, 28vh, 320px);
-		max-width: 100%;
-		border-radius: 1rem;
-		object-fit: contain;
-		border: 4px solid rgba(255, 215, 0, 0.3);
-		box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+	.slide-img {
+		width: 100%;
+		height: 100%;
+		object-fit: cover;
+		border-radius: 1.5rem;
+		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+		border: 2px solid rgba(255, 215, 0, 0.2);
 	}
 
-	.slideshow-caption {
-		font-size: clamp(1rem, 2vw, 1.6rem);
-		color: #d0d0d0;
-		font-style: italic;
-		margin: 0;
+	.slide-caption {
+		position: absolute;
+		bottom: 0.5rem;
+		left: 0; right: 0;
 		text-align: center;
+		font-size: clamp(0.75rem, 1.3vw, 1rem);
+		color: rgba(255,255,255,0.85);
+		font-style: italic;
+		background: rgba(0,0,0,0.45);
+		backdrop-filter: blur(8px);
+		padding: 0.3rem 0.8rem;
+		border-radius: 0 0 1.5rem 1.5rem;
+		margin: 0;
 	}
 
-	.person-block {
+	/* ── BARRE DU BAS ─────────────────────────────────────── */
+	.bottom-bar {
 		display: flex;
 		align-items: center;
-		gap: 1.5rem;
+		gap: 0.75rem;
+		padding: 0.5rem 1.5rem 0.75rem;
+		z-index: 1;
+		position: relative;
+		min-height: 0;
 	}
 
-	.person-photo {
-		width: clamp(80px, 12vw, 160px);
-		height: clamp(80px, 12vw, 160px);
+	.person-chip {
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.4rem 0.9rem 0.4rem 0.4rem;
+		flex-shrink: 0;
+	}
+
+	.person-avatar {
+		width: clamp(36px, 5vw, 52px);
+		height: clamp(36px, 5vw, 52px);
 		border-radius: 50%;
 		object-fit: cover;
-		border: 4px solid #ffd700;
+		border: 2px solid rgba(255, 215, 0, 0.4);
 	}
 
-	.person-info { display: flex; flex-direction: column; }
-
-	.person-name {
-		font-size: clamp(1.4rem, 3vw, 2.5rem);
-		font-weight: 700;
+	.person-initial {
+		background: #1e3a5f;
 		color: #ffd700;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 800;
+		font-size: 1.1rem;
 	}
 
-	.person-relation {
-		font-size: clamp(1.1rem, 2.2vw, 1.8rem);
-		color: #a0c4ff;
+	.person-info { display: flex; flex-direction: column; line-height: 1.2; }
+	.person-name { font-size: clamp(0.8rem, 1.4vw, 1rem); font-weight: 700; color: #ffd700; }
+	.person-rel { font-size: clamp(0.65rem, 1.1vw, 0.85rem); color: #94a3b8; }
+
+	.ha-chips { display: flex; gap: 0.4rem; }
+
+	.ha-chip {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		padding: 0.3rem 0.7rem;
 	}
 
-	.person-message {
-		font-size: clamp(1rem, 2vw, 1.6rem);
-		color: #d0d0d0;
+	.ha-chip-icon { font-size: clamp(0.9rem, 1.5vw, 1.2rem); }
+	.ha-chip-val { font-size: clamp(0.75rem, 1.3vw, 1rem); font-weight: 700; color: #ffd700; }
+	.ha-chip-label { font-size: clamp(0.55rem, 0.9vw, 0.75rem); color: #64748b; }
+
+	.faq-ticker {
+		flex: 1;
+		display: flex;
+		align-items: center;
+		gap: 0.6rem;
+		padding: 0.5rem 1rem;
+		min-width: 0;
+	}
+
+	.faq-q { font-size: 1rem; flex-shrink: 0; }
+	.faq-text {
+		font-size: clamp(0.8rem, 1.4vw, 1.05rem);
+		color: #cbd5e1;
 		font-style: italic;
-		margin-top: 0.3rem;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
 	}
 
-	.night-message { text-align: center; }
-
-	.night-message p {
-		font-size: clamp(2rem, 5vw, 4rem);
-		margin: 0.5rem 0;
-		color: #d0d0ff;
+	/* ── MODE NUIT ────────────────────────────────────────── */
+	.night-screen {
+		height: 100vh;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		text-align: center;
+		padding: 2rem;
+		box-sizing: border-box;
 	}
 
+	.night-clock {
+		font-family: 'Playfair Display', serif;
+		font-size: clamp(6rem, 20vw, 14rem);
+		font-weight: 700;
+		color: rgba(160, 196, 255, 0.7);
+		line-height: 1;
+		letter-spacing: -0.02em;
+	}
+
+	.night-date {
+		font-size: clamp(1.2rem, 3vw, 2.2rem);
+		color: rgba(148, 163, 184, 0.5);
+		letter-spacing: 0.1em;
+		font-weight: 600;
+	}
+
+	.night-msg {
+		font-size: clamp(1.2rem, 2.5vw, 2rem);
+		color: rgba(134, 239, 172, 0.5);
+		font-weight: 600;
+		margin: 0.5rem 0 0;
+		max-width: 600px;
+	}
+
+	/* ── APPEL VIDÉO ──────────────────────────────────────── */
 	.video-overlay {
 		position: fixed;
 		inset: 0;
@@ -496,20 +645,11 @@
 
 	.video-header {
 		padding: 0.75rem 1.5rem;
-		background: #1a1a2e;
-		display: flex;
-		align-items: center;
+		background: #0f172a;
+		border-bottom: 1px solid rgba(255,215,0,0.2);
 	}
 
-	.video-caller {
-		font-size: 1.4rem;
-		font-weight: 700;
-		color: #ffd700;
-	}
+	.video-caller { font-size: 1.3rem; font-weight: 700; color: #ffd700; }
 
-	.video-overlay iframe {
-		flex: 1;
-		border: none;
-		width: 100%;
-	}
+	.video-overlay iframe { flex: 1; border: none; width: 100%; }
 </style>
