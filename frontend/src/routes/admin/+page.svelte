@@ -55,7 +55,12 @@
 	});
 	let triggeringAlarm = $state(false);
 	let downloadingBackup = $state(false);
+	let restoringBackup = $state(false);
 	let testingNotif = $state(false);
+	let editingEventId = $state<number | null>(null);
+	let editingEvent = $state({ title: '', event_date: '', event_time: '', recurrence: 'none', recurrence_end: '', message_before: '', message_during: '', message_after: '' });
+	let editingFaqId = $state<number | null>(null);
+	let editingFaq = $state({ question: '', answer: '' });
 	let testingHa = $state(false);
 	let haEntities = $state<Array<{ id: number; entity_id: string; label: string; icon: string; unit: string }>>([]);
 	let newHaEntity = $state({ entity_id: '', label: '', icon: '🌡️', unit: '' });
@@ -382,6 +387,75 @@
 		}
 	}
 
+	async function restoreBackup(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const file = input.files?.[0];
+		if (!file) return;
+		if (!confirm(`Restaurer la sauvegarde "${file.name}" ? Les données actuelles seront remplacées.`)) {
+			input.value = '';
+			return;
+		}
+		restoringBackup = true;
+		try {
+			const form = new FormData();
+			form.append('file', file);
+			const res = await fetch(`${API}/api/restore`, { method: 'POST', body: form });
+			if (res.ok) {
+				showToast('Sauvegarde restaurée ✓ — rechargez la page');
+				setTimeout(() => location.reload(), 2000);
+			} else {
+				const err = await res.json();
+				showToast(`Erreur : ${err.detail}`);
+			}
+		} finally {
+			restoringBackup = false;
+			input.value = '';
+		}
+	}
+
+	function startEditEvent(ev: typeof events[0]) {
+		editingEventId = ev.id;
+		editingEvent = {
+			title: ev.title,
+			event_date: ev.event_date,
+			event_time: ev.event_time ?? '',
+			recurrence: ev.recurrence ?? 'none',
+			recurrence_end: (ev as any).recurrence_end ?? '',
+			message_before: (ev as any).message_before ?? '',
+			message_during: (ev as any).message_during ?? '',
+			message_after: (ev as any).message_after ?? '',
+		};
+	}
+
+	async function saveEvent() {
+		if (!editingEventId) return;
+		await fetch(`${API}/api/events/${editingEventId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(editingEvent),
+		});
+		editingEventId = null;
+		await load();
+		showToast('Événement modifié ✓');
+	}
+
+	function startEditFaq(f: typeof faqs[0]) {
+		editingFaqId = f.id;
+		editingFaq = { question: f.question, answer: f.answer };
+	}
+
+	async function saveFaq() {
+		if (!editingFaqId) return;
+		await fetch(`${API}/api/faqs/${editingFaqId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(editingFaq),
+		});
+		editingFaqId = null;
+		await load();
+		showToast('Carte Q/R modifiée ✓');
+	}
+
 	async function resetSeed() {
 		if (!confirm('Remettre toutes les données de démonstration ? (les données actuelles seront effacées)')) return;
 		await fetch(`${API}/api/admin/reset-seed`, { method: 'POST' });
@@ -516,28 +590,51 @@
 			{:else}
 				<ul class="list">
 					{#each events as e}
-						<li>
-							<div>
-								<strong>{e.title}</strong>
-								{#if e.event_time}
-									<span class="event-time"> à {e.event_time.replace(':', 'h')}</span>
-								{/if}
-								<div class="event-meta">
-									{#if !e.recurrence || e.recurrence === 'none'}
-										📅 {e.event_date}
-									{:else if e.recurrence === 'daily'}
-										🔁 Tous les jours
-									{:else if e.recurrence?.startsWith('weekly:')}
-										🔁 {e.recurrence.split(':')[1].split(',').map(d => DAYS[+d]).join(', ')}
-									{:else if e.recurrence?.startsWith('monthly:')}
-										🔁 Le {e.recurrence.split(':')[1]} du mois
-									{/if}
-									{#if e.recurrence_end}
-										<span class="rec-end"> · jusqu'au {e.recurrence_end}</span>
-									{/if}
+						<li class="event-li">
+							{#if editingEventId === e.id}
+								<div class="inline-edit">
+									<input type="text" bind:value={editingEvent.title} placeholder="Titre" />
+									<div class="row">
+										<input type="date" bind:value={editingEvent.event_date} />
+										<input type="time" bind:value={editingEvent.event_time} />
+									</div>
+									<details class="messages-details">
+										<summary>Messages contextuels</summary>
+										<input type="text" bind:value={editingEvent.message_before} placeholder="Avant" />
+										<input type="text" bind:value={editingEvent.message_during} placeholder="Pendant" />
+										<input type="text" bind:value={editingEvent.message_after} placeholder="Après" />
+									</details>
+									<div class="inline-edit-actions">
+										<button class="btn-save-caption" onclick={saveEvent}>Enregistrer</button>
+										<button class="btn-cancel-caption" onclick={() => editingEventId = null}>Annuler</button>
+									</div>
 								</div>
-							</div>
-							<button class="del" onclick={() => deleteEvent(e.id)}>✕</button>
+							{:else}
+								<div class="event-info">
+									<strong>{e.title}</strong>
+									{#if e.event_time}
+										<span class="event-time"> à {e.event_time.replace(':', 'h')}</span>
+									{/if}
+									<div class="event-meta">
+										{#if !e.recurrence || e.recurrence === 'none'}
+											📅 {e.event_date}
+										{:else if e.recurrence === 'daily'}
+											🔁 Tous les jours
+										{:else if e.recurrence?.startsWith('weekly:')}
+											🔁 {e.recurrence.split(':')[1].split(',').map(d => DAYS[+d]).join(', ')}
+										{:else if e.recurrence?.startsWith('monthly:')}
+											🔁 Le {e.recurrence.split(':')[1]} du mois
+										{/if}
+										{#if (e as any).recurrence_end}
+											<span class="rec-end"> · jusqu'au {(e as any).recurrence_end}</span>
+										{/if}
+									</div>
+								</div>
+								<div class="item-actions">
+									<button class="btn-edit" onclick={() => startEditEvent(e)}>✏️</button>
+									<button class="del" onclick={() => deleteEvent(e.id)}>✕</button>
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -560,12 +657,26 @@
 			{:else}
 				<ul class="list">
 					{#each faqs as f}
-						<li>
-							<div>
-								<strong>{f.question}</strong>
-								<p>{f.answer}</p>
-							</div>
-							<button class="del" onclick={() => deleteFaq(f.id)}>✕</button>
+						<li class="event-li">
+							{#if editingFaqId === f.id}
+								<div class="inline-edit">
+									<input type="text" bind:value={editingFaq.question} placeholder="Question" />
+									<textarea bind:value={editingFaq.answer} rows="3" placeholder="Réponse rassurante…"></textarea>
+									<div class="inline-edit-actions">
+										<button class="btn-save-caption" onclick={saveFaq}>Enregistrer</button>
+										<button class="btn-cancel-caption" onclick={() => editingFaqId = null}>Annuler</button>
+									</div>
+								</div>
+							{:else}
+								<div class="event-info">
+									<strong>{f.question}</strong>
+									<p>{f.answer}</p>
+								</div>
+								<div class="item-actions">
+									<button class="btn-edit" onclick={() => startEditFaq(f)}>✏️</button>
+									<button class="del" onclick={() => deleteFaq(f.id)}>✕</button>
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -966,6 +1077,12 @@
 			<button class="btn-backup" onclick={downloadBackup} disabled={downloadingBackup}>
 				{downloadingBackup ? 'Préparation…' : '💾 Télécharger la sauvegarde'}
 			</button>
+			<hr style="margin:1rem 0" />
+			<p class="hint">Pour restaurer une sauvegarde, importez le fichier ZIP précédemment téléchargé. <strong>Attention : les données actuelles seront remplacées.</strong></p>
+			<label class="btn-restore" class:restoring={restoringBackup}>
+				{restoringBackup ? 'Restauration en cours…' : '📂 Importer une sauvegarde (.zip)'}
+				<input type="file" accept=".zip" onchange={restoreBackup} class="hidden-input" disabled={restoringBackup} />
+			</label>
 		</section>
 
 		<section class="card danger-zone">
@@ -1519,6 +1636,65 @@
 	.ha-state-preview { margin-left: auto; font-size: 0.85rem; color: #1a4eb3; font-weight: 600; }
 
 	.ha-add-form { margin-top: 0.5rem; }
+
+	/* ── Inline editing ─────────────────────────────────── */
+	.event-li {
+		display: flex;
+		flex-direction: column;
+		padding: 0.75rem 0;
+		border-bottom: 1px solid #eee;
+	}
+
+	.event-li:last-child { border-bottom: none; }
+
+	.event-info { flex: 1; }
+	.event-info p { margin: 0.25rem 0 0; color: #555; font-size: 0.9rem; }
+
+	.item-actions {
+		display: flex;
+		gap: 0.4rem;
+		margin-top: 0.4rem;
+		justify-content: flex-end;
+	}
+
+	.btn-edit {
+		background: #f0f4ff;
+		border: 1px solid #c0c8e8;
+		color: #1a1a2e;
+		padding: 0.3rem 0.6rem;
+		border-radius: 0.3rem;
+		cursor: pointer;
+		font-size: 0.85rem;
+	}
+
+	.btn-edit:hover { background: #dce4ff; }
+
+	.inline-edit { width: 100%; }
+
+	.inline-edit-actions {
+		display: flex;
+		gap: 0.4rem;
+		margin-top: 0.25rem;
+	}
+
+	/* ── Restore backup ──────────────────────────────────── */
+	.btn-restore {
+		display: block;
+		width: 100%;
+		padding: 0.9rem;
+		background: #fff8e8;
+		color: #7a4a00;
+		border: 2px solid #e6a800;
+		border-radius: 0.5rem;
+		font-size: 1rem;
+		font-weight: 600;
+		cursor: pointer;
+		text-align: center;
+		box-sizing: border-box;
+	}
+
+	.btn-restore:hover:not(.restoring) { background: #fff0c0; }
+	.btn-restore.restoring { opacity: 0.6; cursor: wait; }
 
 	.toast {
 		position: fixed;

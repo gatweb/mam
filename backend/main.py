@@ -502,6 +502,35 @@ async def create_backup():
     )
 
 
+# ── Restore backup ────────────────────────────────────────────────────────────
+
+@app.post("/api/restore")
+async def restore_backup(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(status_code=400, detail="Fichier ZIP requis.")
+    content = await file.read()
+    buf = io.BytesIO(content)
+    try:
+        with zipfile.ZipFile(buf) as zf:
+            names = zf.namelist()
+            # Restaurer la base de données
+            if "snoozolene.db" in names:
+                zf.extract("snoozolene.db", "/data")
+            # Restaurer les médias
+            for name in names:
+                if name.startswith("media/"):
+                    dest = os.path.join("/data", name)
+                    os.makedirs(os.path.dirname(dest), exist_ok=True)
+                    with zf.open(name) as src, open(dest, "wb") as dst:
+                        dst.write(src.read())
+    except zipfile.BadZipFile:
+        raise HTTPException(status_code=400, detail="Archive ZIP invalide.")
+    # Réinitialiser les tables (au cas où le schéma a évolué)
+    init_db()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True, "message": "Sauvegarde restaurée. Rechargez la page."}
+
+
 # ── Seed reset ─────────────────────────────────────────────────────────────────
 
 @app.post("/api/admin/reset-seed")
@@ -576,6 +605,21 @@ async def delete_event(event_id: int, session: Session = Depends(get_session)):
     return {"ok": True}
 
 
+@app.put("/api/events/{event_id}")
+async def update_event(event_id: int, data: dict, session: Session = Depends(get_session)):
+    event = session.get(Event, event_id)
+    if not event:
+        raise HTTPException(status_code=404)
+    for k, v in data.items():
+        if hasattr(event, k) and k != "id":
+            setattr(event, k, v)
+    session.add(event)
+    session.commit()
+    session.refresh(event)
+    await _broadcast({"type": "refresh"})
+    return event
+
+
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
 @app.get("/api/faqs")
@@ -602,6 +646,21 @@ async def delete_faq(faq_id: int, session: Session = Depends(get_session)):
     session.commit()
     await _broadcast({"type": "refresh"})
     return {"ok": True}
+
+
+@app.put("/api/faqs/{faq_id}")
+async def update_faq(faq_id: int, data: dict, session: Session = Depends(get_session)):
+    faq = session.get(FAQ, faq_id)
+    if not faq:
+        raise HTTPException(status_code=404)
+    for k, v in data.items():
+        if hasattr(faq, k) and k != "id":
+            setattr(faq, k, v)
+    session.add(faq)
+    session.commit()
+    session.refresh(faq)
+    await _broadcast({"type": "refresh"})
+    return faq
 
 
 # ── People ─────────────────────────────────────────────────────────────────────

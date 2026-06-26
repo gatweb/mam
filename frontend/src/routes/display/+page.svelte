@@ -204,6 +204,15 @@
 					</div>
 				{/if}
 
+				<!-- Carte Q/R -->
+				{#if currentFaq}
+					<div class="faq-card glass">
+						<p class="faq-label">💬 Question</p>
+						<p class="faq-question">{currentFaq.question}</p>
+						<p class="faq-answer">{currentFaq.answer}</p>
+					</div>
+				{/if}
+
 			</section>
 
 			<!-- ── COLONNE DROITE : photo ── -->
@@ -256,13 +265,6 @@
 				</div>
 			{/if}
 
-			<!-- FAQ rotative -->
-			{#if currentFaq}
-				<div class="faq-ticker glass">
-					<span class="faq-q">💬</span>
-					<span class="faq-text">{currentFaq.answer}</span>
-				</div>
-			{/if}
 
 		</footer>
 
@@ -606,23 +608,42 @@
 	.ha-chip-val { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 700; color: #ffd700; }
 	.ha-chip-label { font-size: clamp(0.75rem, 1.1vw, 1rem); color: #64748b; }
 
-	.faq-ticker {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		gap: 0.6rem;
-		padding: 0.5rem 1rem;
-		min-width: 0;
+	/* ── Carte Q/R ───────────────────────────────────────── */
+	.faq-card {
+		padding: 1rem 1.2rem;
+		border-left: 4px solid #a78bfa;
+		flex-shrink: 0;
+		animation: faq-in 0.6s ease;
 	}
 
-	.faq-q { font-size: 1.3rem; flex-shrink: 0; }
-	.faq-text {
-		font-size: clamp(1rem, 1.8vw, 1.4rem);
-		color: #cbd5e1;
-		font-style: italic;
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+	@keyframes faq-in {
+		from { opacity: 0; transform: translateY(8px); }
+		to   { opacity: 1; transform: translateY(0); }
+	}
+
+	.faq-label {
+		font-size: clamp(0.8rem, 1.3vw, 1rem);
+		font-weight: 800;
+		color: #a78bfa;
+		text-transform: uppercase;
+		letter-spacing: 0.12em;
+		margin: 0 0 0.3rem;
+	}
+
+	.faq-question {
+		font-size: clamp(1.2rem, 2.2vw, 1.8rem);
+		font-weight: 700;
+		color: #e2e8f0;
+		margin: 0 0 0.5rem;
+		line-height: 1.3;
+	}
+
+	.faq-answer {
+		font-size: clamp(1.1rem, 2vw, 1.6rem);
+		font-weight: 600;
+		color: #86efac;
+		margin: 0;
+		line-height: 1.4;
 	}
 
 	/* ── MODE NUIT ────────────────────────────────────────── */
