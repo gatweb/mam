@@ -14,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from PIL import Image
+import httpx
 
 from database import get_session, init_db, reinit_engine, engine
 from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo
