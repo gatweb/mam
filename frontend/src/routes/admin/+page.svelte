@@ -54,7 +54,10 @@
 		alarm_music_url: '',
 	});
 	let triggeringAlarm = $state(false);
+	let playingMusic = $state(false);
 	let downloadingBackup = $state(false);
+	let editingPersonId = $state<number | null>(null);
+	let editingPerson = $state({ first_name: '', relation: '', message: '', next_visit: '', is_primary_caregiver: false, allow_video_call: false });
 	let restoringBackup = $state(false);
 	let testingNotif = $state(false);
 	let editingEventId = $state<number | null>(null);
@@ -158,6 +161,46 @@
 	async function stopAlarm() {
 		await fetch(`${API}/api/alarm/stop`, { method: 'POST' });
 		showToast('Réveil arrêté ✓');
+	}
+
+	async function playMusic() {
+		playingMusic = true;
+		try {
+			const res = await fetch(`${API}/api/music/play`, { method: 'POST' });
+			if (res.ok) showToast('Musique lancée sur la TV ✓');
+			else { const e = await res.json(); showToast(`Erreur : ${e.detail}`); }
+		} finally {
+			playingMusic = false;
+		}
+	}
+
+	async function stopMusic() {
+		await fetch(`${API}/api/music/stop`, { method: 'POST' });
+		showToast('Musique arrêtée ✓');
+	}
+
+	function startEditPerson(p: typeof people[0]) {
+		editingPersonId = p.id;
+		editingPerson = {
+			first_name: p.first_name,
+			relation: p.relation,
+			message: p.message ?? '',
+			next_visit: p.next_visit ?? '',
+			is_primary_caregiver: p.is_primary_caregiver,
+			allow_video_call: p.allow_video_call,
+		};
+	}
+
+	async function savePerson() {
+		if (!editingPersonId) return;
+		await fetch(`${API}/api/people/${editingPersonId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(editingPerson),
+		});
+		editingPersonId = null;
+		await load();
+		showToast('Proche modifié ✓');
 	}
 
 	async function downloadBackup() {
@@ -694,7 +737,7 @@
 			<textarea bind:value={newPerson.message} rows="2" placeholder="Message rassurant (ex: Je suis dans la maison ou au travail. Je reviens toujours.)"></textarea>
 			<label class="checkbox">
 				<input type="checkbox" bind:checked={newPerson.is_primary_caregiver} />
-				Aidant principal (affiché en premier sur l'écran)
+				Présent — affiché sur l'écran comme étant à la maison
 			</label>
 			<label class="checkbox">
 				<input type="checkbox" bind:checked={newPerson.allow_video_call} />
@@ -735,50 +778,75 @@
 								{/if}
 							</div>
 
-							<!-- Info -->
-							<div class="person-details">
-								<strong>{person.first_name}</strong>
-								{#if person.is_primary_caregiver}<span class="badge">⭐ principal</span>{/if}
-								<div class="person-relation-text">{person.relation}</div>
-								{#if person.next_visit}
-									<div class="person-visit">Prochaine visite : {person.next_visit}</div>
-								{/if}
-							</div>
+							{#if editingPersonId === person.id}
+								<!-- Édition inline -->
+								<div class="inline-edit" style="flex:1">
+									<div class="row">
+										<input type="text" bind:value={editingPerson.first_name} placeholder="Prénom" />
+										<input type="text" bind:value={editingPerson.relation} placeholder="Lien (ex: ton fils)" />
+									</div>
+									<input type="text" bind:value={editingPerson.message} placeholder="Message rassurant" />
+									<input type="text" bind:value={editingPerson.next_visit} placeholder="Prochaine visite (ex: dimanche)" />
+									<label class="checkbox">
+										<input type="checkbox" bind:checked={editingPerson.is_primary_caregiver} />
+										Présent à la maison (affiché sur l'écran)
+									</label>
+									<label class="checkbox">
+										<input type="checkbox" bind:checked={editingPerson.allow_video_call} />
+										Appels vidéo autorisés
+									</label>
+									<div class="inline-edit-actions">
+										<button class="btn-save-caption" onclick={savePerson}>Enregistrer</button>
+										<button class="btn-cancel-caption" onclick={() => editingPersonId = null}>Annuler</button>
+									</div>
+								</div>
+							{:else}
+								<!-- Info -->
+								<div class="person-details">
+									<strong>{person.first_name}</strong>
+									{#if person.is_primary_caregiver}<span class="badge">✅ Présent</span>{/if}
+									<div class="person-relation-text">{person.relation}</div>
+									{#if person.next_visit}
+										<div class="person-visit">Prochaine visite : {person.next_visit}</div>
+									{/if}
+								</div>
 
-							<!-- Actions -->
-							<div class="person-actions">
-								{#if person.allow_video_call}
+								<!-- Actions -->
+								<div class="person-actions">
+									{#if person.allow_video_call}
+										<button
+											class="call-btn"
+											onclick={() => startVideoCall(person.id)}
+											disabled={callingPersonId === person.id}
+											title="Lancer un appel vidéo"
+										>
+											{callingPersonId === person.id ? '…' : '📞'}
+										</button>
+									{/if}
 									<button
-										class="call-btn"
-										onclick={() => startVideoCall(person.id)}
-										disabled={callingPersonId === person.id}
-										title="Lancer un appel vidéo"
-									>
-										{callingPersonId === person.id ? '…' : '📞'}
-									</button>
-								{/if}
-								<button
-									class="video-toggle"
-									class:active={person.allow_video_call}
-									onclick={() => toggleVideoCall(person)}
-									title={person.allow_video_call ? 'Désactiver les appels vidéo' : 'Activer les appels vidéo'}
-								>🎥</button>
-								<label class="photo-btn" title="Changer la photo">
-									📷
-									<input
-										type="file"
-										accept="image/*"
-										class="hidden-input"
-										onchange={async (e) => {
-											const f = (e.target as HTMLInputElement).files?.[0];
-											if (!f) return;
-											pendingPhoto = f;
-											await uploadPhotoForPerson(person.id);
-										}}
-									/>
-								</label>
-								<button class="del" onclick={() => deletePerson(person.id)} title="Supprimer">✕</button>
-							</div>
+										class="video-toggle"
+										class:active={person.allow_video_call}
+										onclick={() => toggleVideoCall(person)}
+										title={person.allow_video_call ? 'Désactiver les appels vidéo' : 'Activer les appels vidéo'}
+									>🎥</button>
+									<label class="photo-btn" title="Changer la photo">
+										📷
+										<input
+											type="file"
+											accept="image/*"
+											class="hidden-input"
+											onchange={async (e) => {
+												const f = (e.target as HTMLInputElement).files?.[0];
+												if (!f) return;
+												pendingPhoto = f;
+												await uploadPhotoForPerson(person.id);
+											}}
+										/>
+									</label>
+									<button class="btn-edit" onclick={() => startEditPerson(person)} title="Modifier">✏️</button>
+									<button class="del" onclick={() => deletePerson(person.id)} title="Supprimer">✕</button>
+								</div>
+							{/if}
 						</li>
 					{/each}
 				</ul>
@@ -955,6 +1023,18 @@
 					{triggeringAlarm ? '…' : '⏰ Tester le réveil maintenant'}
 				</button>
 				<button class="btn-danger-small" onclick={stopAlarm} style="flex:1">⏹ Arrêter</button>
+			</div>
+		</section>
+
+		<section class="card">
+			<h2>🎵 Musique</h2>
+			<p class="hint">Lance ou arrête la musique sur votre lecteur Home Assistant, sans déclencher le réveil.</p>
+			<p class="hint">Le lecteur et l'URL sont configurés dans la section Réveil ci-dessus.</p>
+			<div class="ha-btn-row">
+				<button class="btn-test" onclick={playMusic} disabled={playingMusic || !settings.alarm_ha_media_player} style="flex:1">
+					{playingMusic ? '…' : '🎵 Lancer la musique'}
+				</button>
+				<button class="btn-danger-small" onclick={stopMusic} disabled={!settings.alarm_ha_media_player} style="flex:1">⏹ Arrêter</button>
 			</div>
 		</section>
 

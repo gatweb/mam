@@ -101,6 +101,7 @@
 	const currentFaq = $derived($displayState?.faqs?.[faqIndex] ?? null);
 	const currentPhoto = $derived($displayState?.photos?.[photoIndex] ?? null);
 	const primaryPerson = $derived($displayState?.people?.find((p: any) => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
+	const presentPeople = $derived(($displayState?.people ?? []).filter((p: any) => p.is_primary_caregiver));
 	const todayWeather = $derived($displayState?.weather?.[0] ?? null);
 </script>
 
@@ -237,8 +238,22 @@
 		<!-- BARRE DU BAS -->
 		<footer class="bottom-bar">
 
-			<!-- Proche principal -->
-			{#if primaryPerson}
+			<!-- Proches présents -->
+			{#if presentPeople.length > 0}
+				{#each presentPeople as person}
+					<div class="person-chip glass">
+						{#if person.photo_path}
+							<img src="{API}{person.photo_path}" alt={person.first_name} class="person-avatar" />
+						{:else}
+							<div class="person-avatar person-initial">{person.first_name[0]}</div>
+						{/if}
+						<div class="person-info">
+							<span class="person-name">{person.first_name}</span>
+							<span class="person-rel">{person.relation}</span>
+						</div>
+					</div>
+				{/each}
+			{:else if primaryPerson}
 				<div class="person-chip glass">
 					{#if primaryPerson.photo_path}
 						<img src="{API}{primaryPerson.photo_path}" alt={primaryPerson.first_name} class="person-avatar" />
@@ -273,11 +288,19 @@
 
 <!-- Overlay réveil -->
 {#if alarmActive}
-	<div class="alarm-overlay">
+	<div
+		class="alarm-overlay"
+		role="button"
+		tabindex="0"
+		aria-label="Appuyer pour arrêter le réveil"
+		onclick={async () => { alarmActive = false; await fetch(`${API}/api/alarm/stop`, { method: 'POST' }); }}
+		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { alarmActive = false; fetch(`${API}/api/alarm/stop`, { method: 'POST' }); } }}
+	>
 		<div class="alarm-sun">☀️</div>
 		<div class="alarm-time">{alarmTime}</div>
 		<p class="alarm-msg">Bonjour ! C'est l'heure de se lever.</p>
 		<p class="alarm-sub">Prenez votre temps, tout va bien.</p>
+		<p class="alarm-dismiss">Appuyer pour continuer →</p>
 	</div>
 {/if}
 
@@ -734,6 +757,15 @@
 		font-style: italic;
 		margin: 0;
 	}
+
+	.alarm-dismiss {
+		font-size: clamp(1rem, 2vw, 1.6rem);
+		color: rgba(254, 249, 195, 0.4);
+		margin: 1rem 0 0;
+		letter-spacing: 0.05em;
+	}
+
+	.alarm-overlay { cursor: pointer; }
 
 	/* ── APPEL VIDÉO ──────────────────────────────────────── */
 	.video-overlay {

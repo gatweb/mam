@@ -464,7 +464,12 @@ async def trigger_alarm():
 @app.post("/api/alarm/stop")
 async def stop_alarm(session: Session = Depends(get_session)):
     await _broadcast({"type": "alarm_stop"})
-    s = session.exec(select(Settings)).first() or Settings()
+    await _ha_music_stop()
+    return {"ok": True}
+
+
+async def _ha_music_stop():
+    s = _get_settings()
     if s.ha_url and s.ha_token and s.alarm_ha_media_player:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
@@ -475,6 +480,34 @@ async def stop_alarm(session: Session = Depends(get_session)):
                 )
         except Exception:
             pass
+
+
+@app.post("/api/music/play")
+async def play_music():
+    """Lance la musique sur HA sans déclencher l'overlay réveil."""
+    s = _get_settings()
+    if not s.ha_url or not s.ha_token or not s.alarm_ha_media_player or not s.alarm_music_url:
+        raise HTTPException(status_code=400, detail="Lecteur HA ou URL musique non configurés.")
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            await client.post(
+                f"{s.ha_url.rstrip('/')}/api/services/media_player/play_media",
+                headers={"Authorization": f"Bearer {s.ha_token}"},
+                json={
+                    "entity_id": s.alarm_ha_media_player,
+                    "media_content_id": s.alarm_music_url,
+                    "media_content_type": "music",
+                },
+            )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    return {"ok": True}
+
+
+@app.post("/api/music/stop")
+async def stop_music():
+    """Arrête la musique sur HA."""
+    await _ha_music_stop()
     return {"ok": True}
 
 
