@@ -15,7 +15,7 @@ from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from PIL import Image
 
-from database import get_session, init_db, engine
+from database import get_session, init_db, reinit_engine, engine
 from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo
 from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
 
@@ -596,7 +596,8 @@ async def restore_backup(file: UploadFile = File(...)):
                         dst.write(src.read())
     except zipfile.BadZipFile:
         raise HTTPException(status_code=400, detail="Archive ZIP invalide.")
-    # Réinitialiser les tables (au cas où le schéma a évolué)
+    # Forcer la reconnexion SQLite + migrations de schéma
+    reinit_engine()
     init_db()
     await _broadcast({"type": "refresh"})
     return {"ok": True, "message": "Sauvegarde restaurée. Rechargez la page."}
