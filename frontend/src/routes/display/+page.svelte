@@ -144,8 +144,9 @@
 	{:else}
 		<!-- ══════════════ MODE JOUR ══════════════ -->
 
-		<!-- BANNIÈRE ANNIVERSAIRE -->
-		{#if upcomingBirthdays.length > 0}
+		<!-- ZONE TOP : anniversaires + météo (une seule ligne de grille) -->
+		<header class="top-zone">
+			<!-- Bannière anniversaire (dans la zone météo) -->
 			{#each upcomingBirthdays as bday}
 				<div class="birthday-banner">
 					{#if bday.photo_path}
@@ -167,26 +168,22 @@
 					</div>
 				</div>
 			{/each}
-		{/if}
 
-		<!-- BANDEAU MÉTÉO (top) -->
-		{#if $displayState?.weather?.length}
-			<header class="weather-strip">
-				{#each $displayState.weather as day, i}
-					<div class="wday" class:wday-today={i === 0}>
-						<span class="wday-name">{day.day}</span>
-						<span class="wday-icon">{day.icon}</span>
-						<span class="wday-max">{day.tmax}°</span>
-						<span class="wday-min">{day.tmin}°</span>
-					</div>
-				{/each}
+			<!-- Bandeau météo -->
+			<div class="weather-strip">
+				{#if $displayState?.weather?.length}
+					{#each $displayState.weather as day, i}
+						<div class="wday" class:wday-today={i === 0}>
+							<span class="wday-name">{day.day}</span>
+							<span class="wday-icon">{day.icon}</span>
+							<span class="wday-max">{day.tmax}°</span>
+							<span class="wday-min">{day.tmin}°</span>
+						</div>
+					{/each}
+				{/if}
 				<div class="moment-pill">{getMomentLabel(moment)}</div>
-			</header>
-		{:else}
-			<header class="weather-strip weather-strip--empty">
-				<div class="moment-pill">{getMomentLabel(moment)}</div>
-			</header>
-		{/if}
+			</div>
+		</header>
 
 		<!-- GRILLE PRINCIPALE -->
 		<div class="main-grid">
@@ -463,29 +460,33 @@
 		border-radius: 1.2rem;
 	}
 
-	/* ── MÉTÉO STRIP ──────────────────────────────────────── */
-	.weather-strip {
+	/* ── ZONE TOP (anniversaires + météo = 1 seule ligne de grille) ── */
+	.top-zone {
 		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.5rem 1.5rem;
-		background: rgba(0, 0, 0, 0.2);
-		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+		flex-direction: column;
 		z-index: 1;
 		position: relative;
 	}
 
-	.weather-strip--empty { justify-content: flex-end; }
+	/* ── MÉTÉO STRIP ──────────────────────────────────────── */
+	.weather-strip {
+		display: flex;
+		align-items: center;
+		gap: 0.3rem;
+		padding: 0.3rem 1.2rem;
+		background: rgba(0, 0, 0, 0.2);
+		border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+	}
 
 	.wday {
 		display: flex;
 		flex-direction: column;
 		align-items: center;
-		padding: 0.25rem 0.6rem;
-		border-radius: 0.6rem;
-		gap: 0.05rem;
+		padding: 0.15rem 0.4rem;
+		border-radius: 0.5rem;
+		gap: 0.02rem;
 		flex: 1;
-		max-width: 70px;
+		max-width: 60px;
 	}
 
 	.wday-today {
@@ -494,16 +495,16 @@
 	}
 
 	.wday-name {
-		font-size: clamp(0.8rem, 1.3vw, 1.1rem);
+		font-size: clamp(0.65rem, 1vw, 0.85rem);
 		color: #94a3b8;
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
 	}
 
-	.wday-icon { font-size: clamp(1.3rem, 2.5vw, 2rem); }
-	.wday-max { font-size: clamp(1rem, 1.8vw, 1.4rem); font-weight: 800; color: #ffd700; }
-	.wday-min { font-size: clamp(0.85rem, 1.3vw, 1.1rem); color: #64748b; }
+	.wday-icon { font-size: clamp(1rem, 1.8vw, 1.4rem); }
+	.wday-max { font-size: clamp(0.85rem, 1.4vw, 1.1rem); font-weight: 800; color: #ffd700; }
+	.wday-min { font-size: clamp(0.7rem, 1vw, 0.9rem); color: #64748b; }
 
 	.moment-pill {
 		margin-left: auto;
