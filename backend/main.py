@@ -293,7 +293,7 @@ async def _fetch_weather(settings: Settings) -> list[dict]:
         url = (
             f"https://api.open-meteo.com/v1/forecast"
             f"?latitude={settings.latitude}&longitude={settings.longitude}"
-            f"&daily=weathercode,temperature_2m_max,temperature_2m_min"
+            f"&daily=weather_code,temperature_2m_max,temperature_2m_min"
             f"&timezone=auto&forecast_days=7"
         )
         async with httpx.AsyncClient(timeout=8) as client:
@@ -301,9 +301,11 @@ async def _fetch_weather(settings: Settings) -> list[dict]:
             if r.status_code != 200:
                 return []
             data = r.json()["daily"]
+            # Compatibilité ancienne (weathercode) et nouvelle API (weather_code)
+            codes = data.get("weather_code") or data.get("weathercode") or []
             result = []
             for i, date_str in enumerate(data["time"]):
-                code = data["weathercode"][i]
+                code = codes[i] if i < len(codes) else 0
                 d = datetime.fromisoformat(date_str)
                 result.append({
                     "date": date_str,
@@ -314,7 +316,8 @@ async def _fetch_weather(settings: Settings) -> list[dict]:
                     "tmin": round(data["temperature_2m_min"][i]),
                 })
             return result
-    except Exception:
+    except Exception as e:
+        print(f"[weather] erreur fetch: {e}")
         return []
 
 
