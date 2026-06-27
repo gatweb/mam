@@ -12,4 +12,14 @@ export interface DisplayState {
 
 export const displayState = writable<DisplayState | null>(null);
 
-export const API = import.meta.env.PUBLIC_API_URL || 'http://localhost:8000';
+function resolveApiUrl(): string {
+	// Variable d'env explicite → prioritaire (utile si le backend est sur un autre hôte)
+	if (import.meta.env.PUBLIC_API_URL) return import.meta.env.PUBLIC_API_URL;
+	// Côté navigateur → même hôte que la page, port 8000
+	if (typeof window !== 'undefined') {
+		return `${window.location.protocol}//${window.location.hostname}:8000`;
+	}
+	return 'http://localhost:8000';
+}
+
+export const API = resolveApiUrl();
