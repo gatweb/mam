@@ -340,6 +340,41 @@ async def _fetch_ha_states(settings: Settings, entities: list[HAEntity]) -> list
     return results
 
 
+def _get_birthdays(people, today: date) -> list[dict]:
+    """Retourne les anniversaires dans les 3 prochains jours (y compris aujourd'hui)."""
+    results = []
+    for p in people:
+        if not p.birth_date:
+            continue
+        try:
+            bd = date.fromisoformat(p.birth_date)
+        except ValueError:
+            continue
+        # Prochain anniversaire cette année ou l'an prochain
+        try:
+            next_bd = bd.replace(year=today.year)
+        except ValueError:
+            next_bd = bd.replace(year=today.year, day=28)  # 29 fév → 28 fév
+        if next_bd < today:
+            try:
+                next_bd = bd.replace(year=today.year + 1)
+            except ValueError:
+                next_bd = bd.replace(year=today.year + 1, day=28)
+        days_until = (next_bd - today).days
+        if 0 <= days_until <= 3:
+            age = next_bd.year - bd.year
+            results.append({
+                "person_id": p.id,
+                "first_name": p.first_name,
+                "relation": p.relation,
+                "photo_path": p.photo_path,
+                "days_until": days_until,
+                "age": age,
+                "birth_date": p.birth_date,
+            })
+    return results
+
+
 @app.get("/api/display")
 async def get_display_state(session: Session = Depends(get_session)):
     recipient = session.exec(select(CareRecipient)).first()
@@ -359,6 +394,8 @@ async def get_display_state(session: Session = Depends(get_session)):
     if ha_entities and settings.ha_url and settings.ha_token:
         ha_states = await _fetch_ha_states(settings, ha_entities)
 
+    birthdays = _get_birthdays(people, date.today())
+
     return {
         "recipient": recipient.model_dump() if recipient else None,
         "household": household.model_dump() if household else None,
@@ -371,6 +408,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         "ha_states": ha_states,
         "photos": [p.model_dump() for p in photos],
         "weather": weather,
+        "birthdays": birthdays,
         "server_time": datetime.now().isoformat(),
     }
 

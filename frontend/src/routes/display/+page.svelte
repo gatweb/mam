@@ -102,6 +102,18 @@
 	const currentPhoto = $derived($displayState?.photos?.[photoIndex] ?? null);
 	const primaryPerson = $derived($displayState?.people?.find((p: any) => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
 	const presentPeople = $derived(($displayState?.people ?? []).filter((p: any) => p.is_primary_caregiver));
+	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
+
+	function getSeason(d: Date): 'printemps' | 'ete' | 'automne' | 'hiver' {
+		const m = d.getMonth() + 1;
+		const day = d.getDate();
+		if ((m === 3 && day >= 20) || m === 4 || m === 5 || (m === 6 && day < 21)) return 'printemps';
+		if ((m === 6 && day >= 21) || m === 7 || m === 8 || (m === 9 && day < 22)) return 'ete';
+		if ((m === 9 && day >= 22) || m === 10 || m === 11 || (m === 12 && day < 21)) return 'automne';
+		return 'hiver';
+	}
+
+	const season = $derived(getSeason(now));
 	const todayWeather = $derived($displayState?.weather?.[0] ?? null);
 </script>
 
@@ -112,7 +124,7 @@
 	<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet" />
 </svelte:head>
 
-<main class="screen {moment}" class:night={isNight}>
+<main class="screen {moment} {season}" class:night={isNight}>
 
 	<!-- Icône météo en filigrane -->
 	{#if todayWeather && !isNight}
@@ -131,6 +143,31 @@
 
 	{:else}
 		<!-- ══════════════ MODE JOUR ══════════════ -->
+
+		<!-- BANNIÈRE ANNIVERSAIRE -->
+		{#if upcomingBirthdays.length > 0}
+			{#each upcomingBirthdays as bday}
+				<div class="birthday-banner">
+					{#if bday.photo_path}
+						<img src="{API}{bday.photo_path}" alt={bday.first_name} class="bday-avatar" />
+					{:else}
+						<span class="bday-cake">🎂</span>
+					{/if}
+					<div class="bday-text">
+						{#if bday.days_until === 0}
+							<span class="bday-main">🎉 Aujourd'hui c'est l'anniversaire de {bday.first_name} !</span>
+							<span class="bday-sub">Bon anniversaire {bday.relation} · {bday.age} ans 🎈</span>
+						{:else if bday.days_until === 1}
+							<span class="bday-main">🎂 Demain c'est l'anniversaire de {bday.first_name}</span>
+							<span class="bday-sub">{bday.relation} · {bday.age} ans</span>
+						{:else}
+							<span class="bday-main">🎂 Dans {bday.days_until} jours : anniversaire de {bday.first_name}</span>
+							<span class="bday-sub">{bday.relation} · {bday.age} ans</span>
+						{/if}
+					</div>
+				</div>
+			{/each}
+		{/if}
 
 		<!-- BANDEAU MÉTÉO (top) -->
 		{#if $displayState?.weather?.length}
@@ -340,11 +377,68 @@
 		transition: background 2s ease;
 	}
 
-	.screen.matin    { background: linear-gradient(145deg, #0f172a 0%, #1e3a5f 45%, #2d5986 100%); }
+	/* Défauts jour (hiver) */
+	.screen.matin      { background: linear-gradient(145deg, #0f172a 0%, #1e3a5f 45%, #2d5986 100%); }
 	.screen.apres-midi { background: linear-gradient(145deg, #0c1e3a 0%, #163566 45%, #1e4d8c 100%); }
-	.screen.soir     { background: linear-gradient(145deg, #1a0a2e 0%, #3d1a4a 35%, #7a2e2e 65%, #b84a1a 100%); }
+	.screen.soir       { background: linear-gradient(145deg, #1a0a2e 0%, #3d1a4a 35%, #7a2e2e 65%, #b84a1a 100%); }
 	.screen.night,
-	.screen.nuit     { background: linear-gradient(145deg, #03040f 0%, #060818 100%); }
+	.screen.nuit       { background: linear-gradient(145deg, #03040f 0%, #060818 100%); }
+
+	/* Printemps — vert tendre, lilas */
+	.screen.printemps.matin      { background: linear-gradient(145deg, #0d1f1a 0%, #1a3d2e 40%, #2d5a3e 100%); }
+	.screen.printemps.apres-midi { background: linear-gradient(145deg, #0f1f18 0%, #1e4030 45%, #2e6645 100%); }
+	.screen.printemps.soir       { background: linear-gradient(145deg, #1a0d2e 0%, #3d1a4a 35%, #5a2e5a 65%, #7a3a7a 100%); }
+
+	/* Été — chaud, azur */
+	.screen.ete.matin      { background: linear-gradient(145deg, #0a1a2e 0%, #0d3060 40%, #1a5080 100%); }
+	.screen.ete.apres-midi { background: linear-gradient(145deg, #0a1528 0%, #0d2a50 40%, #1a4a78 100%); }
+	.screen.ete.soir       { background: linear-gradient(145deg, #1a0a20 0%, #3a1040 35%, #6a2a15 65%, #a04010 100%); }
+
+	/* Automne — ocre, brun, rouille */
+	.screen.automne.matin      { background: linear-gradient(145deg, #1a100a 0%, #3a2010 40%, #6a4015 100%); }
+	.screen.automne.apres-midi { background: linear-gradient(145deg, #180e08 0%, #362010 40%, #5a380f 100%); }
+	.screen.automne.soir       { background: linear-gradient(145deg, #1a0808 0%, #401010 35%, #7a2810 65%, #a03a05 100%); }
+
+	/* Bannière anniversaire */
+	.birthday-banner {
+		display: flex;
+		align-items: center;
+		gap: 1rem;
+		padding: 0.6rem 1.5rem;
+		background: linear-gradient(90deg, rgba(255,215,0,0.18) 0%, rgba(255,150,0,0.12) 100%);
+		border-bottom: 1px solid rgba(255,215,0,0.25);
+		z-index: 2;
+		animation: bday-slide-in 0.8s ease;
+	}
+
+	@keyframes bday-slide-in {
+		from { opacity: 0; transform: translateY(-10px); }
+		to   { opacity: 1; transform: translateY(0); }
+	}
+
+	.bday-avatar {
+		width: clamp(36px, 5vw, 52px);
+		height: clamp(36px, 5vw, 52px);
+		border-radius: 50%;
+		object-fit: cover;
+		border: 2px solid #ffd700;
+		flex-shrink: 0;
+	}
+
+	.bday-cake { font-size: clamp(2rem, 4vw, 3rem); flex-shrink: 0; }
+
+	.bday-text { display: flex; flex-direction: column; gap: 0.1rem; }
+
+	.bday-main {
+		font-size: clamp(1.1rem, 2vw, 1.6rem);
+		font-weight: 700;
+		color: #ffd700;
+	}
+
+	.bday-sub {
+		font-size: clamp(0.9rem, 1.5vw, 1.2rem);
+		color: rgba(255,215,0,0.65);
+	}
 
 	/* ── Filigrane météo ──────────────────────────────────── */
 	.weather-watermark {

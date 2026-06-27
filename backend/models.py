@@ -28,6 +28,7 @@ class Person(SQLModel, table=True):
     photo_path: Optional[str] = None
     message: Optional[str] = None
     next_visit: Optional[str] = None  # texte libre : "dimanche après-midi"
+    birth_date: Optional[str] = None  # ISO date YYYY-MM-DD
     is_primary_caregiver: bool = False
     allow_video_call: bool = False
 

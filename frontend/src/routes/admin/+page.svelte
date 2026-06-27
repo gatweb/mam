@@ -27,7 +27,7 @@
 
 	let newEvent = $state({ title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' });
 	let newFaq = $state({ question: '', answer: '' });
-	let newPerson = $state({ first_name: '', relation: '', message: '', is_primary_caregiver: false, allow_video_call: false });
+	let newPerson = $state({ first_name: '', relation: '', message: '', birth_date: '', is_primary_caregiver: false, allow_video_call: false });
 	let callingPersonId = $state<number | null>(null);
 	let photos = $state<Array<{ id: number; path: string; caption: string | null; display_order: number }>>([]);
 	let uploadingPhotos = $state(false);
@@ -57,7 +57,7 @@
 	let playingMusic = $state(false);
 	let downloadingBackup = $state(false);
 	let editingPersonId = $state<number | null>(null);
-	let editingPerson = $state({ first_name: '', relation: '', message: '', next_visit: '', is_primary_caregiver: false, allow_video_call: false });
+	let editingPerson = $state({ first_name: '', relation: '', message: '', next_visit: '', birth_date: '', is_primary_caregiver: false, allow_video_call: false });
 	let restoringBackup = $state(false);
 	let testingNotif = $state(false);
 	let editingEventId = $state<number | null>(null);
@@ -186,6 +186,7 @@
 			relation: p.relation,
 			message: p.message ?? '',
 			next_visit: p.next_visit ?? '',
+			birth_date: (p as any).birth_date ?? '',
 			is_primary_caregiver: p.is_primary_caregiver,
 			allow_video_call: p.allow_video_call,
 		};
@@ -395,7 +396,7 @@
 		if (pendingPhoto) {
 			await uploadPhotoForPerson(created.id);
 		}
-		newPerson = { first_name: '', relation: '', message: '', is_primary_caregiver: false };
+		newPerson = { first_name: '', relation: '', message: '', birth_date: '', is_primary_caregiver: false, allow_video_call: false };
 		await load();
 		showToast('Proche ajouté ✓');
 	}
@@ -735,6 +736,8 @@
 				<input type="text" bind:value={newPerson.relation} placeholder="Lien (ex: ton fils)" />
 			</div>
 			<textarea bind:value={newPerson.message} rows="2" placeholder="Message rassurant (ex: Je suis dans la maison ou au travail. Je reviens toujours.)"></textarea>
+			<label class="field-label">Date de naissance (optionnel — pour les anniversaires)</label>
+			<input type="date" bind:value={newPerson.birth_date} />
 			<label class="checkbox">
 				<input type="checkbox" bind:checked={newPerson.is_primary_caregiver} />
 				Présent — affiché sur l'écran comme étant à la maison
@@ -787,6 +790,8 @@
 									</div>
 									<input type="text" bind:value={editingPerson.message} placeholder="Message rassurant" />
 									<input type="text" bind:value={editingPerson.next_visit} placeholder="Prochaine visite (ex: dimanche)" />
+									<label class="field-label">Date de naissance</label>
+									<input type="date" bind:value={editingPerson.birth_date} />
 									<label class="checkbox">
 										<input type="checkbox" bind:checked={editingPerson.is_primary_caregiver} />
 										Présent à la maison (affiché sur l'écran)
@@ -806,6 +811,9 @@
 									<strong>{person.first_name}</strong>
 									{#if person.is_primary_caregiver}<span class="badge">✅ Présent</span>{/if}
 									<div class="person-relation-text">{person.relation}</div>
+									{#if (person as any).birth_date}
+										<div class="person-visit">🎂 {new Date((person as any).birth_date + 'T12:00').toLocaleDateString('fr-FR', { day: 'numeric', month: 'long' })}</div>
+									{/if}
 									{#if person.next_visit}
 										<div class="person-visit">Prochaine visite : {person.next_visit}</div>
 									{/if}
