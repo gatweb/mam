@@ -105,13 +105,12 @@
 	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
 	const haPosition = $derived(($displayState as any)?.ha_position ?? 'bottom');
 
-	const presentSentence = $derived(() => {
-		if (!presentPeople.length) return '';
-		const names = presentPeople.map((p: any) => p.first_name);
-		if (names.length === 1) return `${names[0]} est avec toi aujourd'hui.`;
-		const last = names.pop();
-		return `${names.join(', ')} et ${last} sont avec toi aujourd'hui.`;
-	})();
+	const presentSentence = $derived(
+		presentPeople.length === 0 ? '' :
+		presentPeople.length === 1 ? `${presentPeople[0].first_name} est avec toi aujourd'hui.` :
+		presentPeople.slice(0, -1).map((p: any) => p.first_name).join(', ')
+			+ ` et ${presentPeople[presentPeople.length - 1].first_name} sont avec toi aujourd'hui.`
+	);
 
 	function getSeason(d: Date): 'printemps' | 'ete' | 'automne' | 'hiver' {
 		const m = d.getMonth() + 1;
