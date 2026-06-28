@@ -124,8 +124,13 @@ async def _run_daily_reminder():
 
 async def _run_alarm():
     settings = _get_settings()
-    await _broadcast({"type": "alarm", "time": settings.alarm_time})
-    # Lancer la musique sur HA si configuré
+    # Envoyer l'URL de musique au display — il la joue directement dans le navigateur
+    await _broadcast({
+        "type": "alarm",
+        "time": settings.alarm_time,
+        "music_url": settings.alarm_music_url or "",
+    })
+    # Optionnel : lancer aussi sur un lecteur HA si configuré
     if settings.ha_url and settings.ha_token and settings.alarm_ha_media_player and settings.alarm_music_url:
         try:
             async with httpx.AsyncClient(timeout=5) as client:
