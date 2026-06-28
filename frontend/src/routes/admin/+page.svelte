@@ -8,6 +8,9 @@
 	let people = $state<Array<{ id: number; first_name: string; relation: string; message: string | null; next_visit: string | null; photo_path: string | null; is_primary_caregiver: boolean; allow_video_call: boolean }>>([]);
 
 	let quickMsg = $state({ content: '', author: 'Gaëtan' });
+	let dailyMessages = $state<Array<{ id: number; content: string; author: string | null; created_at: string }>>([]);
+	let editingMsgId = $state<number | null>(null);
+	let editingMsg = $state({ content: '', author: '' });
 	const DAYS = ['Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam', 'Dim'];
 	let selectedDays = $state<boolean[]>([false, false, false, false, false, false, false]);
 	let recurrenceType = $state<'none' | 'daily' | 'weekly' | 'monthly'>('none');
@@ -52,6 +55,7 @@
 		alarm_days: '0,1,2,3,4,5,6',
 		alarm_ha_media_player: '',
 		alarm_music_url: '',
+		ha_position: 'bottom',
 	});
 	let triggeringAlarm = $state(false);
 	let playingMusic = $state(false);
@@ -75,7 +79,7 @@
 	let activeTab = $state('message');
 
 	async function load() {
-		const [h, f, e, p, st, ha, ph] = await Promise.all([
+		const [h, f, e, p, st, ha, ph, msgs] = await Promise.all([
 			fetch(`${API}/api/household`).then(r => r.json()),
 			fetch(`${API}/api/faqs`).then(r => r.json()),
 			fetch(`${API}/api/events`).then(r => r.json()),
@@ -83,6 +87,7 @@
 			fetch(`${API}/api/settings`).then(r => r.json()),
 			fetch(`${API}/api/ha/entities`).then(r => r.json()),
 			fetch(`${API}/api/photos`).then(r => r.json()),
+			fetch(`${API}/api/daily-messages`).then(r => r.json()),
 		]);
 		household = h || household;
 		faqs = f;
@@ -91,6 +96,7 @@
 		if (st) settings = { ...settings, ...st };
 		haEntities = ha;
 		photos = ph;
+		dailyMessages = msgs;
 	}
 
 	async function saveSettings() {
@@ -302,7 +308,31 @@
 			body: JSON.stringify(quickMsg),
 		});
 		quickMsg.content = '';
+		await load();
 		showToast('Message envoyé à l\'écran ✓');
+	}
+
+	function startEditMsg(m: typeof dailyMessages[0]) {
+		editingMsgId = m.id;
+		editingMsg = { content: m.content, author: m.author ?? '' };
+	}
+
+	async function saveMsg() {
+		if (!editingMsgId) return;
+		await fetch(`${API}/api/daily-message/${editingMsgId}`, {
+			method: 'PUT',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify(editingMsg),
+		});
+		editingMsgId = null;
+		await load();
+		showToast('Message modifié ✓');
+	}
+
+	async function deleteMsg(id: number) {
+		await fetch(`${API}/api/daily-message/${id}`, { method: 'DELETE' });
+		await load();
+		showToast('Message supprimé ✓');
 	}
 
 	async function saveHousehold() {
@@ -530,13 +560,47 @@
 
 	{#if activeTab === 'message'}
 		<section class="card">
-			<h2>Message immédiat</h2>
+			<h2>Nouveau message</h2>
 			<p class="hint">Apparaît sur l'écran en quelques secondes.</p>
 			<textarea bind:value={quickMsg.content} rows="4" placeholder="Je suis allé faire les courses. Je reviens vers 17h. Tout va bien."></textarea>
 			<input type="text" bind:value={quickMsg.author} placeholder="Ton prénom (ex: Gaëtan)" />
 			<button class="primary" onclick={sendQuickMessage} disabled={!quickMsg.content.trim()}>
 				Envoyer maintenant
 			</button>
+		</section>
+
+		<section class="card">
+			<h2>Messages envoyés</h2>
+			{#if dailyMessages.length === 0}
+				<p class="empty">Aucun message.</p>
+			{:else}
+				<ul class="list">
+					{#each dailyMessages as m}
+						<li class="event-li">
+							{#if editingMsgId === m.id}
+								<div class="inline-edit">
+									<textarea bind:value={editingMsg.content} rows="3"></textarea>
+									<input type="text" bind:value={editingMsg.author} placeholder="Auteur" />
+									<div class="inline-edit-actions">
+										<button class="btn-save-caption" onclick={saveMsg}>Enregistrer</button>
+										<button class="btn-cancel-caption" onclick={() => editingMsgId = null}>Annuler</button>
+									</div>
+								</div>
+							{:else}
+								<div class="event-info">
+									<p style="margin:0;white-space:pre-wrap">{m.content}</p>
+									{#if m.author}<span class="daily-author-tag">— {m.author}</span>{/if}
+									<div class="event-meta">{new Date(m.created_at).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' })}</div>
+								</div>
+								<div class="item-actions">
+									<button class="btn-edit" onclick={() => startEditMsg(m)}>✏️</button>
+									<button class="del" onclick={() => deleteMsg(m.id)}>✕</button>
+								</div>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
 		</section>
 	{/if}
 
@@ -1069,6 +1133,24 @@
 
 		<section class="card">
 			<h2>Capteurs affichés sur l'écran</h2>
+			<div class="setting-row" style="margin-bottom:0.75rem">
+				<div>
+					<strong>Position des capteurs</strong>
+					<p class="hint">En haut (dans la barre météo) ou en bas de l'écran.</p>
+				</div>
+				<div class="pos-toggle">
+					<button
+						class="pos-btn"
+						class:active={settings.ha_position === 'top'}
+						onclick={() => { settings.ha_position = 'top'; saveSettings(); }}
+					>⬆ Haut</button>
+					<button
+						class="pos-btn"
+						class:active={settings.ha_position === 'bottom'}
+						onclick={() => { settings.ha_position = 'bottom'; saveSettings(); }}
+					>⬇ Bas</button>
+				</div>
+			</div>
 
 			<!-- Recherche d'entités -->
 			<label class="field-label">Rechercher une entité HA</label>
@@ -1764,6 +1846,21 @@
 		gap: 0.4rem;
 		margin-top: 0.25rem;
 	}
+
+	.daily-author-tag { font-size: 0.85rem; color: #f59e0b; font-style: italic; }
+
+	/* ── Position toggle HA ──────────────────────────────────── */
+	.pos-toggle { display: flex; gap: 0.3rem; flex-shrink: 0; }
+	.pos-btn {
+		padding: 0.4rem 0.8rem;
+		border: 2px solid #ddd;
+		background: white;
+		border-radius: 0.4rem;
+		cursor: pointer;
+		font-size: 0.9rem;
+		font-weight: 600;
+	}
+	.pos-btn.active { background: #1a1a2e; color: white; border-color: #1a1a2e; }
 
 	/* ── Restore backup ──────────────────────────────────── */
 	.btn-restore {

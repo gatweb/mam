@@ -86,6 +86,8 @@ class Settings(SQLModel, table=True):
     # Météo
     latitude: float = 48.8566
     longitude: float = 2.3522
+    # Capteurs HA — position sur l'écran
+    ha_position: str = "bottom"  # "top" | "bottom"
     # Réveil
     alarm_enabled: bool = False
     alarm_time: str = "08:00"

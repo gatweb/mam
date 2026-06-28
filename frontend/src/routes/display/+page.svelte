@@ -103,6 +103,7 @@
 	const primaryPerson = $derived($displayState?.people?.find((p: any) => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
 	const presentPeople = $derived(($displayState?.people ?? []).filter((p: any) => p.is_primary_caregiver));
 	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
+	const haPosition = $derived(($displayState as any)?.ha_position ?? 'bottom');
 
 	function getSeason(d: Date): 'printemps' | 'ete' | 'automne' | 'hiver' {
 		const m = d.getMonth() + 1;
@@ -182,6 +183,18 @@
 					{/each}
 				{/if}
 				<div class="moment-pill">{getMomentLabel(moment)}</div>
+				<!-- Capteurs HA en haut -->
+				{#if haPosition === 'top' && $displayState?.ha_states?.length}
+					<div class="ha-chips-top">
+						{#each $displayState.ha_states as sensor}
+							<div class="ha-chip-top glass">
+								<span>{sensor.icon}</span>
+								<span class="ha-chip-top-val">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
+								<span class="ha-chip-top-label">{sensor.label}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
 			</div>
 		</header>
 
@@ -301,8 +314,8 @@
 				</div>
 			{/if}
 
-			<!-- Capteurs HA -->
-			{#if $displayState?.ha_states?.length}
+			<!-- Capteurs HA en bas -->
+			{#if haPosition === 'bottom' && $displayState?.ha_states?.length}
 				<div class="ha-chips">
 					{#each $displayState.ha_states as sensor}
 						<div class="ha-chip glass">
@@ -712,6 +725,26 @@
 	.person-info { display: flex; flex-direction: column; line-height: 1.2; }
 	.person-name { font-size: clamp(1rem, 1.8vw, 1.4rem); font-weight: 700; color: #ffd700; }
 	.person-rel { font-size: clamp(0.85rem, 1.4vw, 1.1rem); color: #94a3b8; }
+
+	/* Capteurs HA en haut (dans la barre météo) */
+	.ha-chips-top {
+		display: flex;
+		gap: 0.4rem;
+		margin-left: 0.5rem;
+		border-left: 1px solid rgba(255,255,255,0.1);
+		padding-left: 0.5rem;
+	}
+
+	.ha-chip-top {
+		display: flex;
+		align-items: center;
+		gap: 0.25rem;
+		padding: 0.15rem 0.5rem;
+		font-size: clamp(0.75rem, 1.2vw, 1rem);
+	}
+
+	.ha-chip-top-val { font-weight: 700; color: #ffd700; }
+	.ha-chip-top-label { color: #64748b; font-size: 0.85em; }
 
 	.ha-chips { display: flex; gap: 0.4rem; }
 

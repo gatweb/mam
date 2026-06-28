@@ -34,6 +34,7 @@ def _migrate():
         ("settings", "alarm_music_url", "TEXT DEFAULT ''"),
         ("settings", "ha_url", "TEXT DEFAULT ''"),
         ("settings", "ha_token", "TEXT DEFAULT ''"),
+        ("settings", "ha_position", "TEXT DEFAULT 'bottom'"),
         ("settings", "latitude", "REAL DEFAULT 48.8566"),
         ("settings", "longitude", "REAL DEFAULT 2.3522"),
     ]

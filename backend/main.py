@@ -413,6 +413,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         "photos": [p.model_dump() for p in photos],
         "weather": weather,
         "birthdays": birthdays,
+        "ha_position": settings.ha_position,
         "server_time": datetime.now().isoformat(),
     }
 
@@ -643,6 +644,11 @@ async def update_household(data: dict, session: Session = Depends(get_session)):
 
 # ── Daily message ──────────────────────────────────────────────────────────────
 
+@app.get("/api/daily-messages")
+def list_daily_messages(session: Session = Depends(get_session)):
+    return session.exec(select(DailyMessage).order_by(DailyMessage.created_at.desc())).all()
+
+
 @app.post("/api/daily-message")
 async def post_daily_message(data: dict, session: Session = Depends(get_session)):
     msg = DailyMessage(content=data["content"], author=data.get("author"))
@@ -651,6 +657,33 @@ async def post_daily_message(data: dict, session: Session = Depends(get_session)
     session.refresh(msg)
     await _broadcast({"type": "refresh"})
     return msg
+
+
+@app.put("/api/daily-message/{msg_id}")
+async def update_daily_message(msg_id: int, data: dict, session: Session = Depends(get_session)):
+    msg = session.get(DailyMessage, msg_id)
+    if not msg:
+        raise HTTPException(status_code=404)
+    if "content" in data:
+        msg.content = data["content"]
+    if "author" in data:
+        msg.author = data["author"]
+    session.add(msg)
+    session.commit()
+    session.refresh(msg)
+    await _broadcast({"type": "refresh"})
+    return msg
+
+
+@app.delete("/api/daily-message/{msg_id}")
+async def delete_daily_message(msg_id: int, session: Session = Depends(get_session)):
+    msg = session.get(DailyMessage, msg_id)
+    if not msg:
+        raise HTTPException(status_code=404)
+    session.delete(msg)
+    session.commit()
+    await _broadcast({"type": "refresh"})
+    return {"ok": True}
 
 
 # ── Events ─────────────────────────────────────────────────────────────────────
