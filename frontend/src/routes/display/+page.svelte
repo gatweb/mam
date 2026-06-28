@@ -105,6 +105,14 @@
 	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
 	const haPosition = $derived(($displayState as any)?.ha_position ?? 'bottom');
 
+	const presentSentence = $derived(() => {
+		if (!presentPeople.length) return '';
+		const names = presentPeople.map((p: any) => p.first_name);
+		if (names.length === 1) return `${names[0]} est avec toi aujourd'hui.`;
+		const last = names.pop();
+		return `${names.join(', ')} et ${last} sont avec toi aujourd'hui.`;
+	})();
+
 	function getSeason(d: Date): 'printemps' | 'ete' | 'automne' | 'hiver' {
 		const m = d.getMonth() + 1;
 		const day = d.getDate();
@@ -210,6 +218,9 @@
 					<div class="date-line">{formatDate(now).toUpperCase()}</div>
 					{#if $displayState?.household}
 						<div class="reassurance">{$displayState.household.reassurance_message}</div>
+					{/if}
+					{#if presentSentence}
+						<div class="present-sentence">👋 {presentSentence}</div>
 					{/if}
 				</div>
 
@@ -579,6 +590,13 @@
 		color: #86efac;
 		font-weight: 600;
 		margin-top: 0.5rem;
+	}
+
+	.present-sentence {
+		font-size: clamp(1rem, 1.8vw, 1.4rem);
+		color: #fbbf24;
+		font-weight: 600;
+		margin-top: 0.3rem;
 	}
 
 	/* Message du jour */
