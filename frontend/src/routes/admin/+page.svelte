@@ -173,7 +173,7 @@
 		playingMusic = true;
 		try {
 			const res = await fetch(`${API}/api/music/play`, { method: 'POST' });
-			if (res.ok) showToast('Musique lancée sur la TV ✓');
+			if (res.ok) showToast('Musique lancée sur l\'écran ✓');
 			else { const e = await res.json(); showToast(`Erreur : ${e.detail}`); }
 		} finally {
 			playingMusic = false;
@@ -1100,13 +1100,15 @@
 
 		<section class="card">
 			<h2>🎵 Musique</h2>
-			<p class="hint">Lance ou arrête la musique sur votre lecteur Home Assistant, sans déclencher le réveil.</p>
-			<p class="hint">Le lecteur et l'URL sont configurés dans la section Réveil ci-dessus.</p>
+			<p class="hint">Lance ou arrête la musique sur l'écran d'Agnès (et sur Home Assistant si configuré). L'URL est celle configurée dans la section Réveil ci-dessus.</p>
+			{#if !settings.alarm_music_url}
+				<p class="hint" style="color:#e67e22">Ajoutez d'abord une URL de flux radio dans la section Réveil.</p>
+			{/if}
 			<div class="ha-btn-row">
-				<button class="btn-test" onclick={playMusic} disabled={playingMusic || !settings.alarm_ha_media_player} style="flex:1">
+				<button class="btn-test" onclick={playMusic} disabled={playingMusic || !settings.alarm_music_url} style="flex:1">
 					{playingMusic ? '…' : '🎵 Lancer la musique'}
 				</button>
-				<button class="btn-danger-small" onclick={stopMusic} disabled={!settings.alarm_ha_media_player} style="flex:1">⏹ Arrêter</button>
+				<button class="btn-danger-small" onclick={stopMusic} disabled={!settings.alarm_music_url} style="flex:1">⏹ Arrêter</button>
 			</div>
 		</section>
 

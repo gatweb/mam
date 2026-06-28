@@ -532,29 +532,34 @@ async def _ha_music_stop():
 
 @app.post("/api/music/play")
 async def play_music():
-    """Lance la musique sur HA sans déclencher l'overlay réveil."""
+    """Lance la musique dans le navigateur display (et sur HA si configuré)."""
     s = _get_settings()
-    if not s.ha_url or not s.ha_token or not s.alarm_ha_media_player or not s.alarm_music_url:
-        raise HTTPException(status_code=400, detail="Lecteur HA ou URL musique non configurés.")
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            await client.post(
-                f"{s.ha_url.rstrip('/')}/api/services/media_player/play_media",
-                headers={"Authorization": f"Bearer {s.ha_token}"},
-                json={
-                    "entity_id": s.alarm_ha_media_player,
-                    "media_content_id": s.alarm_music_url,
-                    "media_content_type": "music",
-                },
-            )
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=str(exc))
+    if not s.alarm_music_url:
+        raise HTTPException(status_code=400, detail="URL musique non configurée dans la section Réveil.")
+    # Diffuser au navigateur display via WebSocket
+    await _broadcast({"type": "music_play", "music_url": s.alarm_music_url})
+    # Optionnel : jouer aussi sur HA si configuré
+    if s.ha_url and s.ha_token and s.alarm_ha_media_player:
+        try:
+            async with httpx.AsyncClient(timeout=5) as client:
+                await client.post(
+                    f"{s.ha_url.rstrip('/')}/api/services/media_player/play_media",
+                    headers={"Authorization": f"Bearer {s.ha_token}"},
+                    json={
+                        "entity_id": s.alarm_ha_media_player,
+                        "media_content_id": s.alarm_music_url,
+                        "media_content_type": "music",
+                    },
+                )
+        except Exception:
+            pass
     return {"ok": True}
 
 
 @app.post("/api/music/stop")
 async def stop_music():
-    """Arrête la musique sur HA."""
+    """Arrête la musique dans le navigateur display (et sur HA si configuré)."""
+    await _broadcast({"type": "music_stop"})
     await _ha_music_stop()
     return {"ok": True}
 

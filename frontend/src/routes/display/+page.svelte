@@ -63,6 +63,16 @@
 				alarmAudio?.pause();
 				alarmAudio = null;
 			}
+			if (msg.type === 'music_play' && msg.music_url) {
+				alarmAudio?.pause();
+				alarmAudio = new Audio(msg.music_url);
+				alarmAudio.loop = true;
+				alarmAudio.play().catch(() => {});
+			}
+			if (msg.type === 'music_stop') {
+				alarmAudio?.pause();
+				alarmAudio = null;
+			}
 		};
 		ws.onclose = () => setTimeout(connectWs, 3000);
 	}
