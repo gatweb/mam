@@ -15,6 +15,7 @@
 	let videoCall = $state<{ room: string; personName: string | null } | null>(null);
 	let alarmActive = $state(false);
 	let alarmTime = $state('');
+	let alarmAudio: HTMLAudioElement | null = null;
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
@@ -48,8 +49,20 @@
 			if (msg.type === 'refresh') fetchState();
 			if (msg.type === 'video_call') videoCall = { room: msg.room, personName: msg.person_name ?? null };
 			if (msg.type === 'video_call_end') videoCall = null;
-			if (msg.type === 'alarm') { alarmActive = true; alarmTime = msg.time ?? ''; }
-			if (msg.type === 'alarm_stop') alarmActive = false;
+			if (msg.type === 'alarm') {
+				alarmActive = true;
+				alarmTime = msg.time ?? '';
+				if (msg.music_url) {
+					alarmAudio = new Audio(msg.music_url);
+					alarmAudio.loop = true;
+					alarmAudio.play().catch(() => {});
+				}
+			}
+			if (msg.type === 'alarm_stop') {
+				alarmActive = false;
+				alarmAudio?.pause();
+				alarmAudio = null;
+			}
 		};
 		ws.onclose = () => setTimeout(connectWs, 3000);
 	}
@@ -350,8 +363,8 @@
 		role="button"
 		tabindex="0"
 		aria-label="Appuyer pour arrêter le réveil"
-		onclick={async () => { alarmActive = false; await fetch(`${API}/api/alarm/stop`, { method: 'POST' }); }}
-		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { alarmActive = false; fetch(`${API}/api/alarm/stop`, { method: 'POST' }); } }}
+		onclick={async () => { alarmActive = false; alarmAudio?.pause(); alarmAudio = null; await fetch(`${API}/api/alarm/stop`, { method: 'POST' }); }}
+		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { alarmActive = false; alarmAudio?.pause(); alarmAudio = null; fetch(`${API}/api/alarm/stop`, { method: 'POST' }); } }}
 	>
 		<div class="alarm-sun">☀️</div>
 		<div class="alarm-time">{alarmTime}</div>
