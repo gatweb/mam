@@ -526,6 +526,17 @@
 		}
 	}
 
+	async function endVideoCall() {
+		try {
+			await fetch(`${API}/api/video-call/end`, {
+				method: 'POST'
+			});
+			showToast("Signal de fin d'appel envoyé à l'écran");
+		} catch (e) {
+			showToast("Erreur lors de la coupure de l'appel");
+		}
+	}
+
 	async function restoreBackup(e: Event) {
 		const input = e.target as HTMLInputElement;
 		const file = input.files?.[0];
@@ -899,7 +910,10 @@
 		</section>
 
 		<section class="card">
-			<h2>Proches enregistrés</h2>
+			<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; flex-wrap: wrap; gap: 0.5rem;">
+				<h2 style="margin: 0;">Proches enregistrés</h2>
+				<button class="btn-danger-small" onclick={endVideoCall}>⏹ Raccrocher l'appel</button>
+			</div>
 			{#if people.length === 0}
 				<p class="empty">Aucun proche.</p>
 			{:else}
