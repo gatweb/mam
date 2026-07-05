@@ -126,6 +126,14 @@ def _reschedule_daily_reminder(settings: Settings):
             id="alarm",
             replace_existing=True,
         )
+    # Sauvegarde automatique nocturne — toujours active
+    bh, bm = BACKUP_TIME.split(":")
+    scheduler.add_job(
+        _run_auto_backup,
+        CronTrigger(hour=int(bh), minute=int(bm)),
+        id="auto_backup",
+        replace_existing=True,
+    )
 
 
 async def _run_daily_reminder():
@@ -660,18 +668,27 @@ async def delete_fallback_audio(name: str):
 # ── Backup ────────────────────────────────────────────────────────────────────
 
 DB_PATH = os.getenv("DB_PATH", "/data/snoozolene.db")
+# Sauvegarde automatique nocturne (voir docs/sauvegardes.md)
+BACKUP_DIR = os.getenv("BACKUP_DIR", "/data/backups")
+BACKUP_TIME = os.getenv("BACKUP_TIME", "03:30")   # HH:MM, heure locale
+BACKUP_KEEP = int(os.getenv("BACKUP_KEEP", "7"))  # nombre de ZIP conservés
 
 
-@app.get("/api/backup")
-async def create_backup():
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+def _write_backup_zip(target) -> None:
+    """Écrit le ZIP de sauvegarde (base + médias) dans un fichier ou un buffer."""
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
         if os.path.exists(DB_PATH):
             zf.write(DB_PATH, "snoozolene.db")
         for root, _, files in os.walk(MEDIA_DIR):
             for fname in files:
                 fp = os.path.join(root, fname)
                 zf.write(fp, os.path.relpath(fp, os.path.dirname(MEDIA_DIR)))
+
+
+@app.get("/api/backup")
+async def create_backup():
+    buf = io.BytesIO()
+    _write_backup_zip(buf)
     buf.seek(0)
     filename = f"snoozolene-backup-{date.today()}.zip"
     return StreamingResponse(
@@ -679,6 +696,36 @@ async def create_backup():
         media_type="application/zip",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+async def _run_auto_backup():
+    """Sauvegarde nocturne : ZIP horodaté dans BACKUP_DIR, rotation des anciens.
+    En cas d'échec, alerte l'aidant via ntfy (mieux vaut le savoir tout de suite
+    qu'au moment où on a besoin de la sauvegarde)."""
+    os.makedirs(BACKUP_DIR, exist_ok=True)
+    path = os.path.join(BACKUP_DIR, f"snoozolene-auto-{date.today()}.zip")
+    tmp = path + ".tmp"
+    try:
+        _write_backup_zip(tmp)
+        os.replace(tmp, path)  # atomique : jamais de ZIP à moitié écrit
+        backups = sorted(
+            f for f in os.listdir(BACKUP_DIR)
+            if f.startswith("snoozolene-auto-") and f.endswith(".zip")
+        )
+        for old in backups[:-BACKUP_KEEP]:
+            os.remove(os.path.join(BACKUP_DIR, old))
+        print(f"[backup] OK : {path}")
+    except Exception as e:
+        print(f"[backup] ÉCHEC : {e}")
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        await send_notification(
+            _get_settings(),
+            title="⚠️ Snoozolène — Échec de la sauvegarde automatique",
+            message=f"La sauvegarde nocturne a échoué : {e}",
+            priority="high",
+            tags=["warning", "floppy_disk"],
+        )
 
 
 # ── Restore backup ────────────────────────────────────────────────────────────
