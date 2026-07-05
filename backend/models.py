@@ -94,6 +94,10 @@ class Settings(SQLModel, table=True):
     alarm_days: str = "0,1,2,3,4,5,6"   # 0=Lun … 6=Dim
     alarm_ha_media_player: str = ""       # entity_id du lecteur HA (ex: media_player.salon)
     alarm_music_url: str = ""             # URL flux radio ou fichier audio
+    # Appels vidéo — URL du serveur Jitsi (auto-hébergé recommandé, voir docs/)
+    jitsi_url: str = "https://meet.jit.si"
+    # Alerte chute — jeton secret exigé par POST /api/alert/fall (vide = désactivé)
+    fall_webhook_token: str = ""
 
 
 class Photo(SQLModel, table=True):
@@ -113,6 +117,13 @@ class HAEntity(SQLModel, table=True):
     icon: str = "🌡️"        # emoji affiché
     unit: str = ""          # ex: °C, %, km/h
     display_order: int = 0
+    # Affichage personnalisé des états binaires (on/off).
+    # Ex FP2 salle de bain : on → « Salle de bain occupée » (rouge),
+    #                        off → « Salle de bain libre » (vert)
+    state_on_label: Optional[str] = None
+    state_off_label: Optional[str] = None
+    state_on_color: Optional[str] = None   # couleur CSS, ex: #f87171
+    state_off_color: Optional[str] = None  # couleur CSS, ex: #4ade80
 
 
 class ScreenEvent(SQLModel, table=True):

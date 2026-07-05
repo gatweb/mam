@@ -28,7 +28,7 @@
 		return 'none';
 	}
 
-	let newEvent = $state({ title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' });
+	let newEvent = $state({ title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', person_name: '', message_before: '', message_during: '', message_after: '' });
 	let newFaq = $state({ question: '', answer: '' });
 	let newPerson = $state({ first_name: '', relation: '', message: '', birth_date: '', is_primary_caregiver: false, allow_video_call: false });
 	let callingPersonId = $state<number | null>(null);
@@ -56,7 +56,11 @@
 		alarm_ha_media_player: '',
 		alarm_music_url: '',
 		ha_position: 'bottom',
+		jitsi_url: 'https://meet.jit.si',
+		fall_webhook_token: '',
 	});
+	let fallbackAudios = $state<Array<{ name: string; url: string }>>([]);
+	let uploadingAudio = $state(false);
 	let triggeringAlarm = $state(false);
 	let playingMusic = $state(false);
 	let downloadingBackup = $state(false);
@@ -69,8 +73,9 @@
 	let editingFaqId = $state<number | null>(null);
 	let editingFaq = $state({ question: '', answer: '' });
 	let testingHa = $state(false);
-	let haEntities = $state<Array<{ id: number; entity_id: string; label: string; icon: string; unit: string }>>([]);
-	let newHaEntity = $state({ entity_id: '', label: '', icon: '🌡️', unit: '' });
+	let haEntities = $state<Array<{ id: number; entity_id: string; label: string; icon: string; unit: string; state_on_label?: string | null; state_off_label?: string | null }>>([]);
+	let newHaEntity = $state({ entity_id: '', label: '', icon: '🌡️', unit: '', state_on_label: '', state_off_label: '', state_on_color: '', state_off_color: '' });
+	let showBinaryOptions = $state(false);
 	let haSearch = $state('');
 	let haSearchResults = $state<Array<{ entity_id: string; friendly_name: string; state: string; unit: string }>>([]);
 	let haSearching = $state(false);
@@ -79,7 +84,7 @@
 	let activeTab = $state('message');
 
 	async function load() {
-		const [h, f, e, p, st, ha, ph, msgs] = await Promise.all([
+		const [h, f, e, p, st, ha, ph, msgs, audios] = await Promise.all([
 			fetch(`${API}/api/household`).then(r => r.json()),
 			fetch(`${API}/api/faqs`).then(r => r.json()),
 			fetch(`${API}/api/events`).then(r => r.json()),
@@ -88,6 +93,7 @@
 			fetch(`${API}/api/ha/entities`).then(r => r.json()),
 			fetch(`${API}/api/photos`).then(r => r.json()),
 			fetch(`${API}/api/daily-messages`).then(r => r.json()),
+			fetch(`${API}/api/audio/fallback`).then(r => r.json()).catch(() => []),
 		]);
 		household = h || household;
 		faqs = f;
@@ -97,6 +103,56 @@
 		haEntities = ha;
 		photos = ph;
 		dailyMessages = msgs;
+		fallbackAudios = audios;
+	}
+
+	// ── Sons de secours du réveil (joués si le flux radio échoue) ─────────
+	async function uploadFallbackAudio(e: Event) {
+		const input = e.target as HTMLInputElement;
+		const files = Array.from(input.files ?? []);
+		if (!files.length) return;
+		uploadingAudio = true;
+		try {
+			for (const file of files) {
+				const form = new FormData();
+				form.append('file', file);
+				const res = await fetch(`${API}/api/audio/fallback`, { method: 'POST', body: form });
+				if (!res.ok) { const err = await res.json(); showToast(`Erreur : ${err.detail}`); return; }
+			}
+			await load();
+			showToast('Son de secours ajouté ✓');
+		} finally {
+			uploadingAudio = false;
+			input.value = '';
+		}
+	}
+
+	async function deleteFallbackAudio(name: string) {
+		await fetch(`${API}/api/audio/fallback/${encodeURIComponent(name)}`, { method: 'DELETE' });
+		await load();
+	}
+
+	// ── Alerte chute : jeton secret pour l'automatisation Home Assistant ──
+	function generateFallToken() {
+		const bytes = new Uint8Array(24);
+		crypto.getRandomValues(bytes);
+		settings.fall_webhook_token = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+		saveSettings();
+	}
+
+	async function copyFallToken() {
+		await navigator.clipboard.writeText(settings.fall_webhook_token);
+		showToast('Jeton copié ✓');
+	}
+
+	async function testFallAlert() {
+		const res = await fetch(`${API}/api/alert/fall`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: JSON.stringify({ token: settings.fall_webhook_token, source: 'test depuis l\'admin' }),
+		});
+		if (res.ok) showToast('🚨 Alerte test déclenchée — regardez l\'écran et votre téléphone');
+		else { const err = await res.json(); showToast(`Erreur : ${err.detail}`); }
 	}
 
 	async function saveSettings() {
@@ -273,9 +329,18 @@
 		await fetch(`${API}/api/ha/entities`, {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify({ ...newHaEntity, display_order: haEntities.length }),
+			body: JSON.stringify({
+				...newHaEntity,
+				// champs on/off vides → null (affichage par défaut Ouvert/Fermé)
+				state_on_label: newHaEntity.state_on_label || null,
+				state_off_label: newHaEntity.state_off_label || null,
+				state_on_color: newHaEntity.state_on_color || null,
+				state_off_color: newHaEntity.state_off_color || null,
+				display_order: haEntities.length,
+			}),
 		});
-		newHaEntity = { entity_id: '', label: '', icon: '🌡️', unit: '' };
+		newHaEntity = { entity_id: '', label: '', icon: '🌡️', unit: '', state_on_label: '', state_off_label: '', state_on_color: '', state_off_color: '' };
+		showBinaryOptions = false;
 		await load();
 		showToast('Entité ajoutée ✓');
 	}
@@ -355,7 +420,7 @@
 				recurrence_end: recurrenceEnd || null,
 			}),
 		});
-		newEvent = { title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', message_before: '', message_during: '', message_after: '' };
+		newEvent = { title: '', event_date: new Date().toISOString().slice(0, 10), event_time: '', person_name: '', message_before: '', message_during: '', message_after: '' };
 		recurrenceType = 'none';
 		selectedDays = [false, false, false, false, false, false, false];
 		recurrenceEnd = '';
@@ -679,6 +744,13 @@
 					</div>
 				</div>
 			{/if}
+
+			<label class="field-label">Personne concernée (optionnel)</label>
+			<input type="text" bind:value={newEvent.person_name} placeholder="ex: Infirmière, Sophie…" />
+			<p class="hint" style="margin-top:-0.3rem">
+				Si ce prénom correspond à un proche enregistré, il apparaîtra automatiquement
+				comme « présent aujourd'hui » sur l'écran le jour du rendez-vous.
+			</p>
 
 			<!-- Messages contextuels -->
 			<details class="messages-details">
@@ -1088,6 +1160,26 @@
 				<input type="url" bind:value={settings.alarm_music_url} placeholder="ex: https://stream.radio.fr/..." />
 			{/if}
 
+			<label class="field-label">Sons de secours (si la radio est injoignable)</label>
+			<p class="hint" style="margin-top:0">
+				Le réveil sonne <strong>toujours</strong>, même sans Internet : si le flux radio ne démarre pas
+				en 8 secondes, un de ces fichiers est joué à la place. Sans fichier, un carillon doux intégré est utilisé.
+			</p>
+			{#if fallbackAudios.length > 0}
+				<ul class="list">
+					{#each fallbackAudios as audio}
+						<li>
+							<span>🎵 {audio.name}</span>
+							<button class="del" onclick={() => deleteFallbackAudio(audio.name)}>✕</button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+			<label class="btn-test" style="display:block;text-align:center;cursor:pointer">
+				{uploadingAudio ? 'Envoi…' : '⬆️ Ajouter un fichier audio (mp3, wav…)'}
+				<input type="file" accept="audio/*" multiple onchange={uploadFallbackAudio} class="hidden-input" disabled={uploadingAudio} />
+			</label>
+
 			<button class="primary" onclick={saveSettings}>Enregistrer</button>
 
 			<div class="ha-btn-row" style="margin-top:0.5rem">
@@ -1110,6 +1202,43 @@
 				</button>
 				<button class="btn-danger-small" onclick={stopMusic} disabled={!settings.alarm_music_url} style="flex:1">⏹ Arrêter</button>
 			</div>
+		</section>
+
+		<section class="card">
+			<h2>📞 Appels vidéo (Jitsi)</h2>
+			<p class="hint">
+				Serveur utilisé pour les appels vidéo. Le serveur public <code>meet.jit.si</code> exige
+				désormais un organisateur connecté (Google/GitHub) — l'écran peut rester bloqué sur
+				« en attente de l'organisateur ». Pour un appel <strong>100 % automatique</strong>,
+				hébergez votre propre serveur : voir <code>docs/appels-video.md</code> du projet.
+			</p>
+			<label class="field-label">URL du serveur Jitsi</label>
+			<input type="url" bind:value={settings.jitsi_url} placeholder="https://meet.jit.si" />
+			<button class="primary" onclick={saveSettings}>Enregistrer</button>
+		</section>
+
+		<section class="card">
+			<h2>🚨 Alerte chute</h2>
+			<p class="hint">
+				Une automatisation Home Assistant (ex : détection de chute du capteur Aqara FP2) peut
+				déclencher un <strong>appel vidéo automatique</strong> sur l'écran + une notification
+				urgente sur votre téléphone. Générez un jeton, puis suivez <code>docs/detection-chute.md</code>.
+			</p>
+			<label class="field-label">Jeton secret (à copier dans l'automatisation HA)</label>
+			<div class="row">
+				<input type="text" readonly value={settings.fall_webhook_token} placeholder="Aucun jeton — alerte désactivée" style="flex:3" />
+				<button class="btn-test" onclick={generateFallToken} style="flex:1">↻ Générer</button>
+			</div>
+			{#if settings.fall_webhook_token}
+				<div class="ha-btn-row">
+					<button class="btn-test" onclick={copyFallToken} style="flex:1">📋 Copier le jeton</button>
+					<button class="btn-danger-small" onclick={testFallAlert} style="flex:1">🚨 Tester l'alerte</button>
+				</div>
+				<p class="hint" style="margin-top:0.5rem">
+					L'automatisation doit appeler : <code>POST /api/alert/fall</code> avec
+					<code>{'{'}"token": "…", "source": "salle de bain"{'}'}</code>
+				</p>
+			{/if}
 		</section>
 
 		<section class="card">
@@ -1192,6 +1321,32 @@
 					<input type="text" bind:value={newHaEntity.label} placeholder="Libellé (ex: Salon)" style="flex:3" />
 					<input type="text" bind:value={newHaEntity.unit} placeholder="°C" style="flex:0.8" />
 				</div>
+
+				<!-- Capteurs binaires (portes, présence FP2…) : textes clairs plutôt que « Ouvert/Fermé » -->
+				<details class="messages-details" bind:open={showBinaryOptions}>
+					<summary>Affichage personnalisé on/off (capteurs de présence, portes…)</summary>
+					<p class="hint">
+						Ex. capteur de présence FP2 dans la salle de bain :
+						détecté → « Salle de bain occupée » en rouge, sinon « Salle de bain libre » en vert.
+					</p>
+					<div class="row">
+						<input type="text" bind:value={newHaEntity.state_on_label} placeholder="Si détecté/on (ex: Salle de bain occupée)" style="flex:3" />
+						<input type="color" bind:value={newHaEntity.state_on_color} style="flex:0.5; min-width:48px; padding:2px; height:38px" title="Couleur si on" />
+					</div>
+					<div class="row">
+						<input type="text" bind:value={newHaEntity.state_off_label} placeholder="Si vide/off (ex: Salle de bain libre)" style="flex:3" />
+						<input type="color" bind:value={newHaEntity.state_off_color} style="flex:0.5; min-width:48px; padding:2px; height:38px" title="Couleur si off" />
+					</div>
+					<div class="ha-btn-row">
+						<button type="button" class="btn-test" style="flex:1" onclick={() => {
+							newHaEntity.state_on_label = newHaEntity.state_on_label || 'Salle de bain occupée';
+							newHaEntity.state_off_label = newHaEntity.state_off_label || 'Salle de bain libre';
+							newHaEntity.state_on_color = '#f87171';
+							newHaEntity.state_off_color = '#4ade80';
+						}}>🚿 Pré-remplir « salle de bain »</button>
+					</div>
+				</details>
+
 				<button class="primary" onclick={addHaEntity} disabled={!newHaEntity.entity_id.trim()}>Ajouter à l'écran</button>
 			</div>
 
@@ -1202,7 +1357,12 @@
 						<li>
 							<div>
 								<strong>{ent.icon} {ent.label}</strong>
-								<div class="event-meta">{ent.entity_id}{ent.unit ? ` · ${ent.unit}` : ''}</div>
+								<div class="event-meta">
+									{ent.entity_id}{ent.unit ? ` · ${ent.unit}` : ''}
+									{#if ent.state_on_label || ent.state_off_label}
+										· on : « {ent.state_on_label ?? 'Ouvert'} » / off : « {ent.state_off_label ?? 'Fermé'} »
+									{/if}
+								</div>
 							</div>
 							<button class="del" onclick={() => deleteHaEntity(ent.id)}>✕</button>
 						</li>

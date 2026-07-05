@@ -37,6 +37,12 @@ def _migrate():
         ("settings", "ha_position", "TEXT DEFAULT 'bottom'"),
         ("settings", "latitude", "REAL DEFAULT 48.8566"),
         ("settings", "longitude", "REAL DEFAULT 2.3522"),
+        ("settings", "jitsi_url", "TEXT DEFAULT 'https://meet.jit.si'"),
+        ("settings", "fall_webhook_token", "TEXT DEFAULT ''"),
+        ("haentity", "state_on_label", "TEXT"),
+        ("haentity", "state_off_label", "TEXT"),
+        ("haentity", "state_on_color", "TEXT"),
+        ("haentity", "state_off_color", "TEXT"),
     ]
     with engine.connect() as conn:
         for table, col, col_type in migrations:

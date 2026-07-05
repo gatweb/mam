@@ -1,0 +1,110 @@
+# Jitsi Meet auto-hébergé pour Snoozolène — appels sans lobby ni compte.
+#
+# Basé sur les images officielles jitsi/docker-jitsi-meet.
+# ENABLE_AUTH=0 : personne n'a besoin de compte → l'écran patient rejoint
+# automatiquement, sans « en attente de l'organisateur ».
+# ⚠️ Contrepartie : quiconque connaît l'URL exacte d'un salon peut y entrer.
+#    Les salons Snoozolène utilisent des noms aléatoires (snoozolene-xxxxxxxx),
+#    créés à chaque appel — le risque est faible, mais n'exposez ce serveur
+#    que si nécessaire, et de préférence derrière votre reverse proxy.
+#
+# Voir README.md pour la configuration (.env) et l'intégration NPM.
+
+services:
+  web:
+    image: jitsi/web:stable
+    restart: unless-stopped
+    ports:
+      - "${HTTP_PORT:-8100}:80"
+      - "${HTTPS_PORT:-8443}:443"
+    volumes:
+      - ${CONFIG:-./jitsi-config}/web:/config:Z
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - TZ=${TZ:-Europe/Brussels}
+      - ENABLE_AUTH=0
+      - ENABLE_GUESTS=1
+      - ENABLE_LOBBY=0
+      - ENABLE_PREJOIN_PAGE=0
+      - ENABLE_WELCOME_PAGE=0
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_BOSH_URL_BASE=http://xmpp.meet.jitsi:5280
+      - XMPP_GUEST_DOMAIN=guest.meet.jitsi
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+    networks:
+      meet.jitsi:
+
+  prosody:
+    image: jitsi/prosody:stable
+    restart: unless-stopped
+    expose:
+      - "5222"
+      - "5347"
+      - "5280"
+    volumes:
+      - ${CONFIG:-./jitsi-config}/prosody/config:/config:Z
+      - ${CONFIG:-./jitsi-config}/prosody/prosody-plugins-custom:/prosody-plugins-custom:Z
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - TZ=${TZ:-Europe/Brussels}
+      - ENABLE_AUTH=0
+      - ENABLE_GUESTS=1
+      - ENABLE_LOBBY=0
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_GUEST_DOMAIN=guest.meet.jitsi
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - JICOFO_COMPONENT_SECRET=${JICOFO_COMPONENT_SECRET}
+      - JICOFO_AUTH_PASSWORD=${JICOFO_AUTH_PASSWORD}
+      - JVB_AUTH_PASSWORD=${JVB_AUTH_PASSWORD}
+    networks:
+      meet.jitsi:
+        aliases:
+          - xmpp.meet.jitsi
+
+  jicofo:
+    image: jitsi/jicofo:stable
+    restart: unless-stopped
+    volumes:
+      - ${CONFIG:-./jitsi-config}/jicofo:/config:Z
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - TZ=${TZ:-Europe/Brussels}
+      - ENABLE_AUTH=0
+      - XMPP_DOMAIN=meet.jitsi
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_MUC_DOMAIN=muc.meet.jitsi
+      - XMPP_SERVER=xmpp.meet.jitsi
+      - JICOFO_COMPONENT_SECRET=${JICOFO_COMPONENT_SECRET}
+      - JICOFO_AUTH_PASSWORD=${JICOFO_AUTH_PASSWORD}
+    depends_on:
+      - prosody
+    networks:
+      meet.jitsi:
+
+  jvb:
+    image: jitsi/jvb:stable
+    restart: unless-stopped
+    ports:
+      - "${JVB_PORT:-10000}:10000/udp"
+    volumes:
+      - ${CONFIG:-./jitsi-config}/jvb:/config:Z
+    environment:
+      - PUBLIC_URL=${PUBLIC_URL}
+      - TZ=${TZ:-Europe/Brussels}
+      - XMPP_AUTH_DOMAIN=auth.meet.jitsi
+      - XMPP_INTERNAL_MUC_DOMAIN=internal-muc.meet.jitsi
+      - XMPP_SERVER=xmpp.meet.jitsi
+      - JVB_AUTH_PASSWORD=${JVB_AUTH_PASSWORD}
+      - JVB_PORT=${JVB_PORT:-10000}
+      - JVB_ADVERTISE_IPS=${JVB_ADVERTISE_IPS}
+    depends_on:
+      - prosody
+    networks:
+      meet.jitsi:
+
+networks:
+  meet.jitsi:

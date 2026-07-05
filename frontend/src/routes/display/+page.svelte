@@ -12,16 +12,22 @@
 	let faqIndex = $state(0);
 	let photoIndex = $state(0);
 	let photoVisible = $state(true);
-	let videoCall = $state<{ room: string; personName: string | null } | null>(null);
+	let eventPage = $state(0);
+	let eventVisible = $state(true);
+	let videoCall = $state<{ room: string; personName: string | null; url: string | null } | null>(null);
 	let alarmActive = $state(false);
 	let alarmTime = $state('');
 	let alarmAudio: HTMLAudioElement | null = null;
+	let audioFallbackTimer: ReturnType<typeof setTimeout> | null = null;
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
 	let photoInterval: ReturnType<typeof setInterval>;
+	let eventInterval: ReturnType<typeof setInterval>;
 	let ws: WebSocket;
 	let wakeLock: WakeLockSentinel | null = null;
+
+	const EVENTS_PER_PAGE = 3;
 
 	async function requestWakeLock() {
 		try {
@@ -42,39 +48,72 @@
 	}
 
 	function connectWs() {
-		const wsUrl = API.replace('http', 'ws') + '/ws';
+		const wsUrl = API
+			? API.replace(/^http/, 'ws') + '/ws'
+			: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 		ws = new WebSocket(wsUrl);
 		ws.onmessage = (e) => {
 			const msg = JSON.parse(e.data);
 			if (msg.type === 'refresh') fetchState();
-			if (msg.type === 'video_call') videoCall = { room: msg.room, personName: msg.person_name ?? null };
+			if (msg.type === 'video_call') videoCall = { room: msg.room, personName: msg.person_name ?? null, url: msg.url ?? null };
 			if (msg.type === 'video_call_end') videoCall = null;
 			if (msg.type === 'alarm') {
 				alarmActive = true;
 				alarmTime = msg.time ?? '';
-				if (msg.music_url) {
-					alarmAudio = new Audio(msg.music_url);
-					alarmAudio.loop = true;
-					alarmAudio.play().catch(() => {});
-				}
+				// Le réveil doit TOUJOURS produire un son : flux radio si joignable,
+				// sinon bascule automatique sur le fichier audio local (fallback).
+				playAudio(msg.music_url || '', msg.fallback_url || FALLBACK_AUDIO);
 			}
-			if (msg.type === 'alarm_stop') {
-				alarmActive = false;
-				alarmAudio?.pause();
-				alarmAudio = null;
-			}
-			if (msg.type === 'music_play' && msg.music_url) {
-				alarmAudio?.pause();
-				alarmAudio = new Audio(msg.music_url);
-				alarmAudio.loop = true;
-				alarmAudio.play().catch(() => {});
-			}
-			if (msg.type === 'music_stop') {
-				alarmAudio?.pause();
-				alarmAudio = null;
-			}
+			if (msg.type === 'alarm_stop') { alarmActive = false; stopAudio(); }
+			if (msg.type === 'music_play') playAudio(msg.music_url || '', msg.fallback_url || null);
+			if (msg.type === 'music_stop') stopAudio();
 		};
 		ws.onclose = () => setTimeout(connectWs, 3000);
+	}
+
+	// ── Lecture audio (radio / réveil) avec fallback local ──────────────────
+	// Fichier de secours embarqué dans le build : joué si le flux en ligne
+	// échoue ou ne démarre pas dans les temps (pas d'Internet, flux mort…).
+	const FALLBACK_AUDIO = '/alarm-fallback.wav';
+	const STREAM_START_TIMEOUT_MS = 8000;
+
+	function stopAudio() {
+		if (audioFallbackTimer) { clearTimeout(audioFallbackTimer); audioFallbackTimer = null; }
+		alarmAudio?.pause();
+		alarmAudio = null;
+	}
+
+	function playAudio(url: string, fallbackUrl: string | null) {
+		stopAudio();
+		if (!url && fallbackUrl) { playDirect(fallbackUrl); return; }
+		if (!url) return;
+
+		const audio = new Audio(url);
+		audio.loop = true;
+		alarmAudio = audio;
+
+		const useFallback = () => {
+			if (alarmAudio !== audio || !fallbackUrl) return; // déjà arrêté ou remplacé
+			console.warn('[audio] flux injoignable, bascule sur le son local');
+			playDirect(fallbackUrl);
+		};
+
+		if (fallbackUrl) {
+			// Si le flux n'a pas démarré après N secondes → fallback
+			audioFallbackTimer = setTimeout(useFallback, STREAM_START_TIMEOUT_MS);
+			audio.addEventListener('playing', () => {
+				if (audioFallbackTimer) { clearTimeout(audioFallbackTimer); audioFallbackTimer = null; }
+			}, { once: true });
+			audio.addEventListener('error', useFallback, { once: true });
+		}
+		audio.play().catch(useFallback);
+	}
+
+	function playDirect(url: string) {
+		stopAudio();
+		alarmAudio = new Audio(url);
+		alarmAudio.loop = true;
+		alarmAudio.play().catch(() => console.warn('[audio] lecture impossible (autoplay bloqué ?)'));
 	}
 
 	onMount(() => {
@@ -101,18 +140,41 @@
 				}, 700);
 			}
 		}, 18000);
+		eventInterval = setInterval(() => {
+			const total = $displayState?.events_today?.length ?? 0;
+			const pages = Math.ceil(total / EVENTS_PER_PAGE);
+			if (pages > 1) {
+				eventVisible = false;
+				setTimeout(() => {
+					eventPage = (eventPage + 1) % pages;
+					eventVisible = true;
+				}, 400);
+			}
+		}, 10000);
 	});
 
 	onDestroy(() => {
 		clearInterval(clockInterval);
 		clearInterval(faqInterval);
 		clearInterval(photoInterval);
+		clearInterval(eventInterval);
+		stopAudio();
 		ws?.close();
 		wakeLock?.release();
 	});
 
-	function _formatHaState(state: string, entityId: string): string {
-		if (entityId.startsWith('device_tracker.')) return state === 'home' ? 'À la maison' : 'Absent';
+	type HaSensor = {
+		entity_id: string; state: string; label: string; icon: string; unit: string;
+		state_on_label?: string | null; state_off_label?: string | null;
+		state_on_color?: string | null; state_off_color?: string | null;
+	};
+
+	function _formatHaState(sensor: HaSensor): string {
+		const { state, entity_id } = sensor;
+		// Libellés personnalisés (ex: FP2 → « Salle de bain occupée / libre »)
+		if (state === 'on' && sensor.state_on_label) return sensor.state_on_label;
+		if (state === 'off' && sensor.state_off_label) return sensor.state_off_label;
+		if (entity_id.startsWith('device_tracker.')) return state === 'home' ? 'À la maison' : 'Absent';
 		if (state === 'on') return 'Ouvert';
 		if (state === 'off') return 'Fermé';
 		const n = parseFloat(state);
@@ -120,20 +182,39 @@
 		return state;
 	}
 
+	// Couleur personnalisée selon l'état (ex: vert = libre, rouge = occupée)
+	function _haStateStyle(sensor: HaSensor): string {
+		const color = sensor.state === 'on' ? sensor.state_on_color
+			: sensor.state === 'off' ? sensor.state_off_color : null;
+		return color ? `--ha-accent:${color}` : '';
+	}
+
+	// Pas d'unité pour les états binaires (« Fermé °C » n'a pas de sens)
+	function _haShowUnit(sensor: HaSensor): boolean {
+		return sensor.state !== 'on' && sensor.state !== 'off';
+	}
+
 	const isNight = $derived(moment === 'nuit');
+	const totalEventPages = $derived(Math.ceil(($displayState?.events_today?.length ?? 0) / EVENTS_PER_PAGE));
+	const currentEvents = $derived(($displayState?.events_today ?? []).slice(eventPage * EVENTS_PER_PAGE, (eventPage + 1) * EVENTS_PER_PAGE));
 	const currentFaq = $derived($displayState?.faqs?.[faqIndex] ?? null);
 	const currentPhoto = $derived($displayState?.photos?.[photoIndex] ?? null);
 	const primaryPerson = $derived($displayState?.people?.find((p: any) => p.is_primary_caregiver) ?? $displayState?.people?.[0] ?? null);
-	const presentPeople = $derived(($displayState?.people ?? []).filter((p: any) => p.is_primary_caregiver));
-	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
+	// Présents : marqués « présent » dans l'admin, ou détectés via l'agenda du jour
+	// (le backend fournit present_person_ids : personnes liées à un événement d'aujourd'hui).
+	const presentPeople = $derived(($displayState?.people ?? []).filter((p: any) =>
+		p.is_primary_caregiver || (($displayState as any)?.present_person_ids ?? []).includes(p.id)
+	));
 	const haPosition = $derived(($displayState as any)?.ha_position ?? 'bottom');
 
+	// Phrase « X est avec toi aujourd'hui » (réassurance)
 	const presentSentence = $derived(
 		presentPeople.length === 0 ? '' :
 		presentPeople.length === 1 ? `${presentPeople[0].first_name} est avec toi aujourd'hui.` :
 		presentPeople.slice(0, -1).map((p: any) => p.first_name).join(', ')
 			+ ` et ${presentPeople[presentPeople.length - 1].first_name} sont avec toi aujourd'hui.`
 	);
+	const upcomingBirthdays = $derived(($displayState?.birthdays ?? []) as Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>);
 
 	function getSeason(d: Date): 'printemps' | 'ete' | 'automne' | 'hiver' {
 		const m = d.getMonth() + 1;
@@ -146,13 +227,30 @@
 
 	const season = $derived(getSeason(now));
 	const todayWeather = $derived($displayState?.weather?.[0] ?? null);
+
+	// URL Jitsi côté patient : rejoint la réunion AUTOMATIQUEMENT —
+	// pas d'écran « Rejoindre », pas de lobby, micro et caméra actifs.
+	// prejoinConfig.enabled est le paramètre actuel ; prejoinPageEnabled est
+	// gardé pour compatibilité avec les anciennes versions auto-hébergées.
+	function jitsiSrc(call: { room: string; url: string | null }): string {
+		const base = call.url ?? `https://meet.jit.si/${call.room}`;
+		const name = $displayState?.recipient?.first_name ?? 'Écran';
+		return base
+			+ '#config.prejoinConfig.enabled=false'
+			+ '&config.prejoinPageEnabled=false'
+			+ '&config.startWithVideoMuted=false'
+			+ '&config.startWithAudioMuted=false'
+			+ '&config.disableDeepLinking=true'
+			+ '&config.enableClosePage=false'
+			+ `&userInfo.displayName=${encodeURIComponent(name)}`;
+	}
 </script>
 
 <svelte:head>
 	<title>Snoozolène</title>
 	<link rel="preconnect" href="https://fonts.googleapis.com" />
 	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous" />
-	<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&display=swap" rel="stylesheet" />
+	<link href="https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&family=Quicksand:wght@500;600&display=swap" rel="stylesheet" />
 </svelte:head>
 
 <main class="screen {moment} {season}" class:night={isNight}>
@@ -212,19 +310,22 @@
 						</div>
 					{/each}
 				{/if}
-				<div class="moment-pill">{getMomentLabel(moment)}</div>
-				<!-- Capteurs HA en haut -->
+				{#if $displayState?.household}
+					<div class="reassurance-banner">{$displayState.household.reassurance_message}</div>
+				{/if}
+				<!-- Capteurs HA en haut (ex: température de la pièce) -->
 				{#if haPosition === 'top' && $displayState?.ha_states?.length}
 					<div class="ha-chips-top">
 						{#each $displayState.ha_states as sensor}
-							<div class="ha-chip-top glass">
+							<div class="ha-chip-top glass" style={_haStateStyle(sensor)}>
 								<span>{sensor.icon}</span>
-								<span class="ha-chip-top-val">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
+								<span class="ha-chip-top-val">{_formatHaState(sensor)}{_haShowUnit(sensor) ? sensor.unit : ''}</span>
 								<span class="ha-chip-top-label">{sensor.label}</span>
 							</div>
 						{/each}
 					</div>
 				{/if}
+				<div class="moment-pill">{getMomentLabel(moment)}</div>
 			</div>
 		</header>
 
@@ -238,9 +339,6 @@
 				<div class="clock-block glass">
 					<div class="clock">{formatTime(now)}</div>
 					<div class="date-line">{formatDate(now).toUpperCase()}</div>
-					{#if $displayState?.household}
-						<div class="reassurance">{$displayState.household.reassurance_message}</div>
-					{/if}
 					{#if presentSentence}
 						<div class="present-sentence">👋 {presentSentence}</div>
 					{/if}
@@ -262,9 +360,18 @@
 				<!-- Événements du jour -->
 				{#if $displayState?.events_today?.length}
 					<div class="events-card glass">
-						<p class="events-title">Aujourd'hui</p>
-						<ul class="events-list">
-							{#each $displayState.events_today.slice(0, 3) as event}
+						<div class="events-header">
+							<p class="events-title">Aujourd'hui</p>
+							{#if totalEventPages > 1}
+								<div class="events-dots">
+									{#each Array(totalEventPages) as _, i}
+										<span class="events-dot" class:active={i === eventPage}></span>
+									{/each}
+								</div>
+							{/if}
+						</div>
+						<ul class="events-list" class:visible={eventVisible}>
+							{#each currentEvents as event (event.id)}
 								{@const status = eventStatus(event.event_time, now)}
 								<li class="event-item" class:event-active={status === 'during'}>
 									<span class="event-dot"></span>
@@ -347,13 +454,13 @@
 				</div>
 			{/if}
 
-			<!-- Capteurs HA en bas -->
+			<!-- Capteurs HA -->
 			{#if haPosition === 'bottom' && $displayState?.ha_states?.length}
 				<div class="ha-chips">
 					{#each $displayState.ha_states as sensor}
-						<div class="ha-chip glass">
+						<div class="ha-chip glass" style={_haStateStyle(sensor)}>
 							<span class="ha-chip-icon">{sensor.icon}</span>
-							<span class="ha-chip-val">{_formatHaState(sensor.state, sensor.entity_id)}{sensor.unit}</span>
+							<span class="ha-chip-val">{_formatHaState(sensor)}{_haShowUnit(sensor) ? sensor.unit : ''}</span>
 							<span class="ha-chip-label">{sensor.label}</span>
 						</div>
 					{/each}
@@ -373,8 +480,8 @@
 		role="button"
 		tabindex="0"
 		aria-label="Appuyer pour arrêter le réveil"
-		onclick={async () => { alarmActive = false; alarmAudio?.pause(); alarmAudio = null; await fetch(`${API}/api/alarm/stop`, { method: 'POST' }); }}
-		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { alarmActive = false; alarmAudio?.pause(); alarmAudio = null; fetch(`${API}/api/alarm/stop`, { method: 'POST' }); } }}
+		onclick={async () => { alarmActive = false; stopAudio(); await fetch(`${API}/api/alarm/stop`, { method: 'POST' }); }}
+		onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { alarmActive = false; stopAudio(); fetch(`${API}/api/alarm/stop`, { method: 'POST' }); } }}
 	>
 		<div class="alarm-sun">☀️</div>
 		<div class="alarm-time">{alarmTime}</div>
@@ -391,15 +498,15 @@
 			<span class="video-caller">📞 {videoCall.personName ? `Appel de ${videoCall.personName}` : 'Appel vidéo'}</span>
 		</div>
 		<iframe
-			src="https://meet.jit.si/{videoCall.room}#config.prejoinPageEnabled=false&config.startWithVideoMuted=false&config.startWithAudioMuted=false&userInfo.displayName=Agnès"
-			allow="camera; microphone; display-capture; autoplay"
+			src={jitsiSrc(videoCall)}
+			allow="camera; microphone; display-capture; autoplay; fullscreen"
 			title="Appel vidéo"
 		></iframe>
 	</div>
 {/if}
 
 <style>
-	@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&display=swap');
+	@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700;800&family=Playfair+Display:wght@700&family=Quicksand:wght@500;600&display=swap');
 
 	:global(body) {
 		margin: 0;
@@ -552,6 +659,17 @@
 	.wday-max { font-size: clamp(0.85rem, 1.4vw, 1.1rem); font-weight: 800; color: #ffd700; }
 	.wday-min { font-size: clamp(0.7rem, 1vw, 0.9rem); color: #64748b; }
 
+	.reassurance-banner {
+		flex: 1;
+		text-align: center;
+		/* Quicksand : police ronde et douce, plus apaisante — taille et position inchangées */
+		font-family: 'Quicksand', 'Nunito', system-ui, sans-serif;
+		font-size: clamp(1rem, 1.8vw, 1.4rem);
+		font-weight: 600;
+		color: #86efac;
+		padding: 0 1rem;
+	}
+
 	.moment-pill {
 		margin-left: auto;
 		background: rgba(160, 196, 255, 0.15);
@@ -592,7 +710,7 @@
 
 	.clock {
 		font-family: 'Playfair Display', serif;
-		font-size: clamp(5rem, 13vw, 10rem);
+		font-size: clamp(4.5rem, 12vw, 9rem);
 		font-weight: 700;
 		color: #ffd700;
 		line-height: 1;
@@ -648,16 +766,51 @@
 		flex-shrink: 0;
 	}
 
+	.events-header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		margin: 0 0 0.4rem;
+	}
+
 	.events-title {
 		font-size: clamp(0.9rem, 1.5vw, 1.2rem);
 		font-weight: 800;
 		color: #a0c4ff;
 		text-transform: uppercase;
 		letter-spacing: 0.12em;
-		margin: 0 0 0.4rem;
+		margin: 0;
 	}
 
-	.events-list { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 0.4rem; }
+	.events-dots {
+		display: flex;
+		gap: 0.3rem;
+	}
+
+	.events-dot {
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: rgba(160, 196, 255, 0.25);
+		transition: background 0.3s ease;
+	}
+
+	.events-dot.active {
+		background: #a0c4ff;
+	}
+
+	.events-list {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+		opacity: 0;
+		transition: opacity 0.4s ease;
+	}
+
+	.events-list.visible { opacity: 1; }
 
 	.event-item {
 		display: flex;
@@ -783,7 +936,7 @@
 		font-size: clamp(0.75rem, 1.2vw, 1rem);
 	}
 
-	.ha-chip-top-val { font-weight: 700; color: #ffd700; }
+	.ha-chip-top-val { font-weight: 700; color: var(--ha-accent, #ffd700); }
 	.ha-chip-top-label { color: #64748b; font-size: 0.85em; }
 
 	.ha-chips { display: flex; gap: 0.4rem; }
@@ -796,7 +949,7 @@
 	}
 
 	.ha-chip-icon { font-size: clamp(1.1rem, 1.8vw, 1.5rem); }
-	.ha-chip-val { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 700; color: #ffd700; }
+	.ha-chip-val { font-size: clamp(1rem, 1.6vw, 1.3rem); font-weight: 700; color: var(--ha-accent, #ffd700); }
 	.ha-chip-label { font-size: clamp(0.75rem, 1.1vw, 1rem); color: #64748b; }
 
 	/* ── Carte Q/R ───────────────────────────────────────── */

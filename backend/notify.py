@@ -9,6 +9,7 @@ async def send_notification(
     message: str,
     priority: str = "default",  # min low default high urgent
     tags: list[str] | None = None,
+    click: str | None = None,  # URL ouverte quand on appuie sur la notification
 ) -> bool:
     if not settings.ntfy_topic:
         return False
@@ -21,6 +22,8 @@ async def send_notification(
     }
     if tags:
         headers["Tags"] = ",".join(tags)
+    if click:
+        headers["Click"] = click
     if settings.ntfy_token:
         headers["Authorization"] = f"Bearer {settings.ntfy_token}"
 

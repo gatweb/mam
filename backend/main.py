@@ -1,9 +1,12 @@
 import os
 import io
+import re
+import random
+import secrets
 import uuid
 import zipfile
 import asyncio
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from contextlib import asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -13,22 +16,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
-from PIL import Image
+from PIL import Image, ImageOps
 import httpx
+
+# Support des photos HEIC/HEIF (iPhone) — optionnel
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
 
 from database import get_session, init_db, reinit_engine, engine
 from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo
 from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
 
 MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
+os.makedirs(f"{MEDIA_DIR}/photos", exist_ok=True)
+os.makedirs(f"{MEDIA_DIR}/videos", exist_ok=True)
+os.makedirs(f"{MEDIA_DIR}/audio", exist_ok=True)  # sons de secours du réveil
 
 scheduler = AsyncIOScheduler()
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    os.makedirs(f"{MEDIA_DIR}/photos", exist_ok=True)
-    os.makedirs(f"{MEDIA_DIR}/videos", exist_ok=True)
     init_db()
     _seed_if_empty()
     _setup_scheduler()
@@ -122,13 +133,30 @@ async def _run_daily_reminder():
     await notify_daily_reminder(settings)
 
 
+def _get_alarm_fallback_url() -> str | None:
+    """URL d'un son de secours uploadé par l'aidant (choisi au hasard s'il y en a
+    plusieurs). None → le display utilisera le carillon embarqué dans le build."""
+    audio_dir = f"{MEDIA_DIR}/audio"
+    try:
+        files = [f for f in os.listdir(audio_dir)
+                 if f.lower().endswith((".mp3", ".wav", ".ogg", ".m4a", ".aac", ".opus", ".flac"))]
+    except FileNotFoundError:
+        return None
+    if not files:
+        return None
+    return f"/media/audio/{random.choice(files)}"
+
+
 async def _run_alarm():
     settings = _get_settings()
-    # Envoyer l'URL de musique au display — il la joue directement dans le navigateur
+    # Envoyer l'URL de musique au display — il la joue directement dans le navigateur.
+    # fallback_url : son local joué automatiquement si le flux radio échoue,
+    # pour que le réveil produise TOUJOURS un son, même sans connexion.
     await _broadcast({
         "type": "alarm",
         "time": settings.alarm_time,
         "music_url": settings.alarm_music_url or "",
+        "fallback_url": _get_alarm_fallback_url(),
     })
     # Optionnel : lancer aussi sur un lecteur HA si configuré
     if settings.ha_url and settings.ha_token and settings.alarm_ha_media_player and settings.alarm_music_url:
@@ -239,7 +267,7 @@ def _next_weekday(weekday: int) -> str:
     days_ahead = weekday - d.weekday()
     if days_ahead <= 0:
         days_ahead += 7
-    return (d.replace(day=d.day + days_ahead)).isoformat()
+    return (d + timedelta(days=days_ahead)).isoformat()
 
 
 # ── Récurrences ────────────────────────────────────────────────────────────────
@@ -343,6 +371,11 @@ async def _fetch_ha_states(settings: Settings, entities: list[HAEntity]) -> list
                         "icon": ent.icon,
                         "unit": ent.unit,
                         "state": state,
+                        # Affichage personnalisé on/off (ex: salle de bain libre/occupée)
+                        "state_on_label": ent.state_on_label,
+                        "state_off_label": ent.state_off_label,
+                        "state_on_color": ent.state_on_color,
+                        "state_off_color": ent.state_off_color,
                     })
             except Exception:
                 pass
@@ -384,6 +417,20 @@ def _get_birthdays(people, today: date) -> list[dict]:
     return results
 
 
+def _present_person_ids(people, events: list[Event]) -> list[int]:
+    """Présence automatique via l'agenda : une personne est considérée présente
+    aujourd'hui si un événement du jour la mentionne dans son champ
+    « personne concernée » (person_name). Le titre n'est volontairement PAS
+    utilisé : « Appel de Sophie » ne doit pas afficher « Sophie est avec toi »."""
+    ids = []
+    haystack = " ".join(e.person_name or "" for e in events).lower()
+    for p in people:
+        name = (p.first_name or "").strip().lower()
+        if len(name) >= 3 and name in haystack:
+            ids.append(p.id)
+    return ids
+
+
 @app.get("/api/display")
 async def get_display_state(session: Session = Depends(get_session)):
     recipient = session.exec(select(CareRecipient)).first()
@@ -404,6 +451,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         ha_states = await _fetch_ha_states(settings, ha_entities)
 
     birthdays = _get_birthdays(people, date.today())
+    present_ids = _present_person_ids(people, events)
 
     return {
         "recipient": recipient.model_dump() if recipient else None,
@@ -419,6 +467,7 @@ async def get_display_state(session: Session = Depends(get_session)):
         "weather": weather,
         "birthdays": birthdays,
         "ha_position": settings.ha_position,
+        "present_person_ids": present_ids,
         "server_time": datetime.now().isoformat(),
     }
 
@@ -464,9 +513,10 @@ def get_settings(session: Session = Depends(get_session)):
         session.add(s)
         session.commit()
         session.refresh(s)
-    # Ne pas exposer le token en clair
+    # Ne pas exposer les tokens en clair (l'API peut être accessible à distance)
     data = s.model_dump()
     data["ntfy_token"] = "***" if s.ntfy_token else ""
+    data["ha_token"] = "***" if s.ha_token else ""
     return data
 
 
@@ -476,8 +526,8 @@ async def update_settings(data: dict, session: Session = Depends(get_session)):
     if not s:
         s = Settings()
     for k, v in data.items():
-        if k == "ntfy_token" and v == "***":
-            continue  # ne pas écraser avec le masque
+        if v == "***":
+            continue  # champ masqué (token) renvoyé tel quel — ne pas écraser
         if hasattr(s, k):
             setattr(s, k, v)
     session.add(s)
@@ -537,7 +587,8 @@ async def play_music():
     if not s.alarm_music_url:
         raise HTTPException(status_code=400, detail="URL musique non configurée dans la section Réveil.")
     # Diffuser au navigateur display via WebSocket
-    await _broadcast({"type": "music_play", "music_url": s.alarm_music_url})
+    await _broadcast({"type": "music_play", "music_url": s.alarm_music_url,
+                      "fallback_url": _get_alarm_fallback_url()})
     # Optionnel : jouer aussi sur HA si configuré
     if s.ha_url and s.ha_token and s.alarm_ha_media_player:
         try:
@@ -561,6 +612,48 @@ async def stop_music():
     """Arrête la musique dans le navigateur display (et sur HA si configuré)."""
     await _broadcast({"type": "music_stop"})
     await _ha_music_stop()
+    return {"ok": True}
+
+
+# ── Sons de secours du réveil (fichiers audio locaux) ─────────────────────────
+
+_AUDIO_EXTENSIONS = (".mp3", ".wav", ".ogg", ".m4a", ".aac", ".opus", ".flac")
+
+
+def _safe_filename(name: str) -> str:
+    """Neutralise les noms de fichiers dangereux (path traversal, caractères spéciaux)."""
+    name = os.path.basename(name or "")
+    return re.sub(r"[^\w.\-]", "_", name) or "fichier"
+
+
+@app.get("/api/audio/fallback")
+def list_fallback_audio():
+    """Liste les sons de secours uploadés (joués si le flux radio échoue)."""
+    audio_dir = f"{MEDIA_DIR}/audio"
+    files = sorted(
+        f for f in os.listdir(audio_dir) if f.lower().endswith(_AUDIO_EXTENSIONS)
+    )
+    return [{"name": f, "url": f"/media/audio/{f}"} for f in files]
+
+
+@app.post("/api/audio/fallback")
+async def upload_fallback_audio(file: UploadFile = File(...)):
+    filename = _safe_filename(file.filename or "")
+    if not filename.lower().endswith(_AUDIO_EXTENSIONS):
+        raise HTTPException(status_code=400,
+                            detail=f"Format audio attendu : {', '.join(_AUDIO_EXTENSIONS)}")
+    path = f"{MEDIA_DIR}/audio/{filename}"
+    with open(path, "wb") as f:
+        f.write(await file.read())
+    return {"ok": True, "name": filename, "url": f"/media/audio/{filename}"}
+
+
+@app.delete("/api/audio/fallback/{name}")
+async def delete_fallback_audio(name: str):
+    path = f"{MEDIA_DIR}/audio/{_safe_filename(name)}"
+    if not os.path.exists(path):
+        raise HTTPException(status_code=404)
+    os.remove(path)
     return {"ok": True}
 
 
@@ -602,10 +695,13 @@ async def restore_backup(file: UploadFile = File(...)):
             # Restaurer la base de données
             if "snoozolene.db" in names:
                 zf.extract("snoozolene.db", "/data")
-            # Restaurer les médias
+            # Restaurer les médias (en refusant les chemins sortant de /data — zip slip)
+            data_root = os.path.realpath("/data")
             for name in names:
-                if name.startswith("media/"):
-                    dest = os.path.join("/data", name)
+                if name.startswith("media/") and not name.endswith("/"):
+                    dest = os.path.realpath(os.path.join(data_root, name))
+                    if not dest.startswith(data_root + os.sep):
+                        continue  # chemin malveillant (ex: media/../../etc/…) ignoré
                     os.makedirs(os.path.dirname(dest), exist_ok=True)
                     with zf.open(name) as src, open(dest, "wb") as dst:
                         dst.write(src.read())
@@ -831,25 +927,38 @@ def list_photos(session: Session = Depends(get_session)):
     return session.exec(select(Photo).order_by(Photo.display_order, Photo.uploaded_at)).all()
 
 
+def _save_photo(content: bytes, original_filename: str) -> str:
+    """Enregistre une photo optimisée pour l'écran : rotation EXIF corrigée,
+    redimensionnement à 1920 px max et conversion en JPEG compressé
+    (accepte JPG/PNG/HEIC…). Retourne le chemin public /media/photos/…"""
+    filename = f"{uuid.uuid4().hex}.jpg"
+    path = f"{MEDIA_DIR}/photos/{filename}"
+    try:
+        img = Image.open(io.BytesIO(content))
+        img = ImageOps.exif_transpose(img)
+        if img.mode != "RGB":
+            img = img.convert("RGB")
+        img.thumbnail((1920, 1920))
+        img.save(path, "JPEG", quality=85, optimize=True)
+    except Exception:
+        # Format inconnu de Pillow : conservé tel quel (mieux que de refuser)
+        filename = _safe_filename(original_filename)
+        filename = f"{uuid.uuid4().hex[:8]}_{filename}"
+        path = f"{MEDIA_DIR}/photos/{filename}"
+        with open(path, "wb") as f:
+            f.write(content)
+    return f"/media/photos/{filename}"
+
+
 @app.post("/api/photos")
 async def upload_photo_slide(
     file: UploadFile = File(...),
     caption: str = "",
     session: Session = Depends(get_session),
 ):
-    filename = f"{datetime.now().timestamp()}_{file.filename}"
-    path = f"{MEDIA_DIR}/photos/{filename}"
-    content = await file.read()
-    with open(path, "wb") as f:
-        f.write(content)
-    try:
-        img = Image.open(path)
-        img.thumbnail((1920, 1920))
-        img.save(path, quality=85, optimize=True)
-    except Exception:
-        pass
+    public_path = _save_photo(await file.read(), file.filename or "photo.jpg")
     count = len(session.exec(select(Photo)).all())
-    photo = Photo(path=f"/media/photos/{filename}", caption=caption or None, display_order=count)
+    photo = Photo(path=public_path, caption=caption or None, display_order=count)
     session.add(photo)
     session.commit()
     session.refresh(photo)
@@ -973,17 +1082,33 @@ async def search_ha_entities(q: str = "", session: Session = Depends(get_session
 
 # ── Appel vidéo ───────────────────────────────────────────────────────────────
 
+def _jitsi_base_url(settings: Settings) -> str:
+    """Serveur Jitsi configuré (auto-hébergé recommandé — voir docs/appels-video.md).
+
+    ⚠️ Sur meet.jit.si (serveur public), les salons exigent désormais un
+    modérateur authentifié : l'écran patient peut rester bloqué sur
+    « en attente de l'organisateur ». Un serveur auto-hébergé sans lobby
+    ni authentification garantit un appel 100 % sans manipulation.
+    """
+    return (getattr(settings, "jitsi_url", "") or "https://meet.jit.si").rstrip("/")
+
+
 @app.post("/api/video-call/start")
 async def start_video_call(data: dict, session: Session = Depends(get_session)):
     person_id = data.get("person_id")
     person = session.get(Person, person_id) if person_id else None
+    settings = session.exec(select(Settings)).first() or Settings()
+    recipient = session.exec(select(CareRecipient)).first()
     room = f"snoozolene-{uuid.uuid4().hex[:12]}"
+    url = f"{_jitsi_base_url(settings)}/{room}"
     await _broadcast({
         "type": "video_call",
         "room": room,
+        "url": url,
         "person_name": person.first_name if person else None,
+        "display_name": recipient.first_name if recipient else None,
     })
-    return {"room": room, "url": f"https://meet.jit.si/{room}"}
+    return {"room": room, "url": url}
 
 
 @app.post("/api/video-call/end")
@@ -992,19 +1117,56 @@ async def end_video_call():
     return {"ok": True}
 
 
+# ── Alerte chute (capteur FP2 ou autre, via automatisation Home Assistant) ────
+
+@app.post("/api/alert/fall")
+async def fall_alert(data: dict | None = None, session: Session = Depends(get_session)):
+    """Déclenché par une automatisation HA quand une chute est détectée.
+
+    Corps JSON attendu : {"token": "...", "source": "salle de bain"}.
+    Actions : appel vidéo automatique plein écran sur le display (la personne
+    n'a RIEN à faire) + notification ntfy urgente à l'aidant avec le lien
+    pour rejoindre l'appel. Voir docs/detection-chute.md pour l'automatisation HA.
+    """
+    data = data or {}
+    settings = session.exec(select(Settings)).first() or Settings()
+    expected = (settings.fall_webhook_token or "").strip()
+    if not expected:
+        raise HTTPException(
+            status_code=403,
+            detail="Alerte chute désactivée : générez un jeton dans Admin → Alertes.",
+        )
+    if not secrets.compare_digest(str(data.get("token", "")), expected):
+        raise HTTPException(status_code=403, detail="Jeton invalide.")
+
+    source = str(data.get("source", "")).strip() or "la maison"
+    recipient = session.exec(select(CareRecipient)).first()
+    room = f"snoozolene-alerte-{uuid.uuid4().hex[:8]}"
+    url = f"{_jitsi_base_url(settings)}/{room}"
+
+    # 1. Ouvrir l'appel plein écran sur l'écran patient, sans aucune manipulation
+    await _broadcast({
+        "type": "video_call",
+        "room": room,
+        "url": url,
+        "person_name": None,
+        "display_name": recipient.first_name if recipient else None,
+    })
+    # 2. Prévenir l'aidant — le clic sur la notification rejoint l'appel
+    await send_notification(
+        settings,
+        title="🚨 ALERTE CHUTE",
+        message=f"Chute détectée ({source}). Un appel vidéo est ouvert sur l'écran — "
+                f"appuyez sur la notification pour rejoindre.",
+        priority="urgent",
+        tags=["rotating_light"],
+        click=url,
+    )
+    return {"ok": True, "room": room, "url": url}
+
+
 # ── Upload photo ───────────────────────────────────────────────────────────────
 
 @app.post("/api/upload/photo")
 async def upload_photo(file: UploadFile = File(...)):
-    filename = f"{datetime.now().timestamp()}_{file.filename}"
-    path = f"{MEDIA_DIR}/photos/{filename}"
-    content = await file.read()
-    with open(path, "wb") as f:
-        f.write(content)
-    try:
-        img = Image.open(path)
-        img.thumbnail((1920, 1920))
-        img.save(path)
-    except Exception:
-        pass
-    return {"path": f"/media/photos/{filename}"}
+    return {"path": _save_photo(await file.read(), file.filename or "photo.jpg")}
