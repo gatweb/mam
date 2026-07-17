@@ -108,3 +108,37 @@ backend) puis « ✅ Écran reconnecté » si la coupure a duré plus d'une minu
    quand le serveur revient (c'est la boucle d'attente du script).
 3. Serveur allumé, `sudo reboot` : l'écran doit revenir sur le tableau de
    bord sans aucune intervention, en moins de 2 minutes.
+
+## Dépannage — symptômes réels et leurs causes (constatés le 17 juillet 2026)
+
+### `Assignment outside of section. Ignoring` dans journalctl
+Le fichier `.service` a été abîmé (souvent : collage dans nano qui a perdu les
+lignes `[Unit]` / `[Service]`). L'ordonnancement et les `Environment=` sont
+alors **silencieusement ignorés**. Ne pas coller le contenu : **copier le
+fichier** :
+```bash
+cp snoozolene-kiosk.service ~/.config/systemd/user/   # ou scp depuis un autre PC
+systemctl --user daemon-reload
+cat ~/.config/systemd/user/snoozolene-kiosk.service   # vérifier [Unit] et [Service]
+```
+
+### Le service affiche `Succeeded` quelques secondes après le lancement, en boucle
+Chromium a trouvé **une autre instance déjà ouverte**, lui a délégué l'URL et
+s'est terminé (code 0) — systemd relance, et ainsi de suite. Corrigé par le
+profil dédié `--user-data-dir` du script ; mais il faut aussi **supprimer les
+anciens lancements concurrents** :
+```bash
+# Chercher les restes d'anciennes installations kiosque :
+ls /etc/xdg/autostart/ ~/.config/autostart/ 2>/dev/null | grep -iE "snooz|chrom|kiosk"
+crontab -l ; sudo crontab -l          # anciennes lignes chromium ?
+pgrep -a chromium                      # qui tourne en ce moment ?
+# Supprimer tout ancien .desktop/cron qui lance chromium, puis :
+pkill chromium ; systemctl --user restart snoozolene-kiosk.service
+```
+
+### Écran gris ou blanc juste après le boot, puis plus rien
+Le service a démarré avant la session graphique (souvent à cause du fichier
+unit abîmé, cf. ci-dessus) et a épuisé ses tentatives. Le script attend
+désormais X lui-même (`xset q`) et le service ne renonce jamais
+(`StartLimitIntervalSec=0`) — mettez à jour les deux fichiers si votre copie
+date d'avant cette correction.

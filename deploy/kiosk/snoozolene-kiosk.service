@@ -1,10 +1,18 @@
 # Snoozolène — service systemd UTILISATEUR pour le PC kiosque.
 # Installation : voir README.md (dans ce dossier).
+# ⚠️ Copier ce fichier avec cp/scp, PAS par copier-coller dans nano : un
+#    collage qui perd les lignes [Unit]/[Service] rend le fichier invalide
+#    (« Assignment outside of section » dans journalctl) et l'ordonnancement
+#    saute silencieusement.
 [Unit]
 Description=Snoozolène — écran kiosque (Chromium plein écran)
 # Le service ne part qu'avec la session graphique et le réseau.
+# (Le script re-vérifie lui-même que X répond : double sécurité.)
 After=graphical-session.target network-online.target
 Wants=network-online.target
+# Un kiosque ne doit JAMAIS abandonner : sans ceci, 5 échecs rapides mettent
+# le service en « failed » définitif → écran blanc jusqu'au prochain reboot.
+StartLimitIntervalSec=0
 
 [Service]
 # URL de l'écran patient — ADAPTER l'IP à votre serveur Snoozolène.
