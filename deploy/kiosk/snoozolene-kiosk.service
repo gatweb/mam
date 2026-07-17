@@ -1,0 +1,23 @@
+# Snoozolène — service systemd UTILISATEUR pour le PC kiosque.
+# Installation : voir README.md (dans ce dossier).
+[Unit]
+Description=Snoozolène — écran kiosque (Chromium plein écran)
+# Le service ne part qu'avec la session graphique et le réseau.
+After=graphical-session.target network-online.target
+Wants=network-online.target
+
+[Service]
+# URL de l'écran patient — ADAPTER l'IP à votre serveur Snoozolène.
+Environment=SNOOZ_URL=http://192.168.0.50:3000/display
+# Session X11 classique (GDM/LightDM). Pour une session Wayland, voir README.
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+# Le script attend que le serveur réponde 200 AVANT de lancer Chromium :
+# plus jamais d'écran blanc figé au démarrage.
+ExecStart=%h/.local/bin/snoozolene-kiosk.sh
+# Si Chromium meurt ou est tué (reboot brutal, crash), il revient tout seul.
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical-session.target

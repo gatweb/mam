@@ -15,23 +15,33 @@ async def send_notification(
         return False
 
     url = f"{settings.ntfy_url.rstrip('/')}/{settings.ntfy_topic}"
-    headers = {
-        "Title": title,
-        "Priority": priority,
-        "Content-Type": "text/plain; charset=utf-8",
-    }
+    # ⚠️ httpx encode les en-têtes str en ASCII : tout titre contenant un
+    # emoji ou un « — » lève UnicodeEncodeError — et comme l'appel est entouré
+    # d'un try/except, la notification échouait SILENCIEUSEMENT. On passe donc
+    # des en-têtes en bytes UTF-8 (ntfy les accepte, cf. sa documentation).
+    headers: list[tuple[bytes, bytes]] = [
+        (b"Title", title.encode("utf-8")),
+        (b"Priority", priority.encode("ascii")),
+        (b"Content-Type", b"text/plain; charset=utf-8"),
+    ]
     if tags:
-        headers["Tags"] = ",".join(tags)
+        headers.append((b"Tags", ",".join(tags).encode("ascii")))
     if click:
-        headers["Click"] = click
+        headers.append((b"Click", click.encode("utf-8")))
     if settings.ntfy_token:
-        headers["Authorization"] = f"Bearer {settings.ntfy_token}"
+        headers.append((b"Authorization", f"Bearer {settings.ntfy_token}".encode("ascii")))
 
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             r = await client.post(url, content=message.encode("utf-8"), headers=headers)
-            return r.status_code == 200
-    except Exception:
+            if r.status_code != 200:
+                print(f"[notify] échec envoi ({r.status_code}) : {r.text[:200]}")
+                return False
+            return True
+    except Exception as e:
+        # Journaliser au lieu d'avaler : une alerte perdue en silence est
+        # indistinguable d'un système sain pour l'aidant à distance.
+        print(f"[notify] échec envoi : {type(e).__name__}: {e}")
         return False
 
 
@@ -52,6 +62,19 @@ async def notify_screen_reconnected(settings: Settings, recipient_name: str):
         message=f"L'écran de {recipient_name} est de nouveau en ligne.",
         priority="low",
         tags=["white_check_mark"],
+    )
+
+
+async def notify_screen_boot(settings: Settings, recipient_name: str):
+    """Heartbeat de démarrage : premier écran vu depuis le (re)démarrage du
+    serveur. L'aidant sait ainsi chaque matin que le système est revenu après
+    le reboot nocturne — sans avoir à aller vérifier sur place."""
+    await send_notification(
+        settings,
+        title=f"🖥️ Snoozolène — Écran en ligne",
+        message=f"L'écran de {recipient_name} est en ligne (démarrage du système).",
+        priority="low",
+        tags=["desktop_computer", "white_check_mark"],
     )
 
 

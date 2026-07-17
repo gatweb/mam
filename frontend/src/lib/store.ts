@@ -7,6 +7,14 @@ export interface DisplayState {
 	events_today: Array<{ id: number; title: string; event_time: string | null; message_before: string | null; message_during: string | null; message_after: string | null }>;
 	faqs: Array<{ id: number; question: string; answer: string }>;
 	daily_message: { content: string; author: string | null } | null;
+	night_start: string;
+	night_end: string;
+	ha_states: Array<{ entity_id: string; label: string; icon: string; unit: string; state: string; state_on_label?: string | null; state_off_label?: string | null; state_on_color?: string | null; state_off_color?: string | null }>;
+	photos: Array<{ id: number; path: string; caption: string | null; display_order: number }>;
+	weather: Array<{ date: string; day: string; icon: string; label: string; tmax: number; tmin: number }>;
+	birthdays: Array<{ first_name: string; relation: string; photo_path: string | null; days_until: number; age: number }>;
+	ha_position: string;
+	present_person_ids: number[];
 	server_time: string;
 }
 

@@ -27,8 +27,8 @@ except ImportError:
     pass
 
 from database import get_session, init_db, reinit_engine, engine
-from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo
-from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_daily_reminder
+from models import CareRecipient, Household, Person, Event, FAQ, DailyMessage, Settings, ScreenEvent, HAEntity, Photo, VideoCall
+from notify import send_notification, notify_screen_disconnected, notify_screen_reconnected, notify_screen_boot, notify_daily_reminder
 
 MEDIA_DIR = os.getenv("MEDIA_DIR", "/data/media")
 os.makedirs(f"{MEDIA_DIR}/photos", exist_ok=True)
@@ -64,6 +64,9 @@ app.mount("/media", StaticFiles(directory=MEDIA_DIR), name="media")
 _ws_clients: set[WebSocket] = set()
 _screen_online = False
 _screen_disconnect_task: asyncio.Task | None = None
+# Passe à False dès qu'un écran s'est connecté depuis le démarrage du backend
+# (sert au heartbeat « écran en ligne » après reboot — voir /ws).
+_first_screen_since_boot = True
 
 
 async def _broadcast(data: dict):
@@ -484,20 +487,38 @@ async def get_display_state(session: Session = Depends(get_session)):
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
-    global _screen_online, _screen_disconnect_task
+    global _screen_online, _screen_disconnect_task, _first_screen_since_boot
     await websocket.accept()
     _ws_clients.add(websocket)
+    was_offline = not _screen_online
     _screen_online = True
 
-    # Annuler l'alerte de déconnexion en attente si l'écran revient
-    if _screen_disconnect_task and not _screen_disconnect_task.done():
-        _screen_disconnect_task.cancel()
-        settings = _get_settings()
-        if settings.ntfy_topic:
-            asyncio.create_task(notify_screen_reconnected(settings, _get_recipient_name()))
+    if was_offline:
+        # L'écran (re)vient : on journalise et on prévient l'aidant.
         with Session(engine) as s:
+            last = s.exec(select(ScreenEvent).order_by(ScreenEvent.id.desc())).first()
+            # Extraire la valeur ICI : après commit/fermeture de session,
+            # l'objet ORM est « détaché » et y accéder lèverait une exception.
+            last_event = last.event if last else None
             s.add(ScreenEvent(event="connected"))
             s.commit()
+        # Annuler l'alerte de déconnexion en attente si l'écran revient vite
+        pending_alert = _screen_disconnect_task and not _screen_disconnect_task.done()
+        if pending_alert:
+            _screen_disconnect_task.cancel()
+        settings = _get_settings()
+        if settings.ntfy_topic:
+            if _first_screen_since_boot:
+                # Heartbeat de démarrage : après le reboot nocturne, l'aidant
+                # reçoit la preuve que tout est revenu, sans vérifier sur place.
+                _first_screen_since_boot = False
+                asyncio.create_task(notify_screen_boot(settings, _get_recipient_name()))
+            elif pending_alert or last_event == "disconnected":
+                # Retour après une coupure (reboot kiosque, panne réseau…).
+                # Avant, ce cas n'était signalé que si la coupure durait < 60 s :
+                # après un vrai reboot, l'aidant recevait « déconnecté » mais
+                # jamais « reconnecté ».
+                asyncio.create_task(notify_screen_reconnected(settings, _get_recipient_name()))
 
     try:
         while True:
@@ -1148,6 +1169,11 @@ async def start_video_call(data: dict, session: Session = Depends(get_session)):
     recipient = session.exec(select(CareRecipient)).first()
     room = f"snoozolene-{uuid.uuid4().hex[:12]}"
     url = f"{_jitsi_base_url(settings)}/{room}"
+    # Tracer l'appel : visible dans /api/health (diagnostic à distance)
+    session.add(VideoCall(room=room, url=url,
+                          person_name=person.first_name if person else None,
+                          source="manual"))
+    session.commit()
     await _broadcast({
         "type": "video_call",
         "room": room,
@@ -1191,6 +1217,10 @@ async def fall_alert(data: dict | None = None, session: Session = Depends(get_se
     room = f"snoozolene-alerte-{uuid.uuid4().hex[:8]}"
     url = f"{_jitsi_base_url(settings)}/{room}"
 
+    # Tracer l'appel : visible dans /api/health (diagnostic à distance)
+    session.add(VideoCall(room=room, url=url, person_name=None, source="fall_alert"))
+    session.commit()
+
     # 1. Ouvrir l'appel plein écran sur l'écran patient, sans aucune manipulation
     await _broadcast({
         "type": "video_call",
@@ -1210,6 +1240,124 @@ async def fall_alert(data: dict | None = None, session: Session = Depends(get_se
         click=url,
     )
     return {"ok": True, "room": room, "url": url}
+
+
+# ── Santé du système (diagnostic à distance) ────────────────────────────────
+# Vue d'ensemble affichée dans l'admin (carte « État du système ») : après les
+# incidents de juillet 2026, l'aidant doit voir EN UN COUP D'ŒIL ce qui est
+# cassé sans se déplacer. Chaque contrôle renvoie ok=true/false, ou null quand
+# la fonction n'est pas configurée (affiché neutre, pas en rouge).
+
+async def _health_ha(settings: Settings) -> dict:
+    if not settings.ha_url or not settings.ha_token:
+        return {"ok": None, "detail": "non configuré"}
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            r = await client.get(
+                f"{settings.ha_url.rstrip('/')}/api/",
+                headers={"Authorization": f"Bearer {settings.ha_token}"},
+            )
+            if r.status_code == 200:
+                return {"ok": True, "detail": "joignable"}
+            return {"ok": False, "detail": f"répond HTTP {r.status_code} (token invalide ?)"}
+    except Exception as e:
+        return {"ok": False, "detail": f"injoignable : {e}"}
+
+
+async def _health_jitsi(settings: Settings) -> dict:
+    """Le serveur public meet.jit.si répond 200 mais bloque les invités sans
+    organisateur authentifié → signalé comme en échec même s'il est joignable :
+    c'est exactement la panne d'appels de juillet 2026."""
+    url = _jitsi_base_url(settings)
+    is_public = "meet.jit.si" in url
+    result = {"url": url, "public_server": is_public}
+    try:
+        async with httpx.AsyncClient(timeout=6, follow_redirects=True) as client:
+            r = await client.get(url)
+            if r.status_code >= 400:
+                return {**result, "ok": False, "detail": f"répond HTTP {r.status_code}"}
+    except Exception as e:
+        return {**result, "ok": False, "detail": f"injoignable : {e}"}
+    if is_public:
+        return {**result, "ok": False,
+                "detail": "serveur public meet.jit.si — les appels bloquent sur "
+                          "« en attente de l'organisateur » (voir docs/appels-video.md)"}
+    return {**result, "ok": True, "detail": "joignable"}
+
+
+def _health_backup() -> dict:
+    try:
+        backups = sorted(
+            f for f in os.listdir(BACKUP_DIR)
+            if f.startswith("snoozolene-auto-") and f.endswith(".zip")
+        )
+    except FileNotFoundError:
+        return {"ok": False, "detail": "aucune sauvegarde trouvée"}
+    if not backups:
+        return {"ok": False, "detail": "aucune sauvegarde trouvée"}
+    latest = backups[-1]
+    mtime = datetime.fromtimestamp(os.path.getmtime(os.path.join(BACKUP_DIR, latest)))
+    age_h = round((datetime.now() - mtime).total_seconds() / 3600, 1)
+    # La sauvegarde est nocturne : au-delà de ~36 h, quelque chose cloche.
+    return {
+        "ok": age_h < 36,
+        "last": latest,
+        "age_hours": age_h,
+        "detail": f"{latest} (il y a {age_h} h)",
+    }
+
+
+@app.get("/api/health")
+async def health(session: Session = Depends(get_session)):
+    settings = session.exec(select(Settings)).first() or Settings()
+
+    # Base de données
+    try:
+        session.exec(select(CareRecipient)).first()
+        db = {"ok": True, "detail": "accessible"}
+    except Exception as e:
+        db = {"ok": False, "detail": f"erreur : {e}"}
+
+    # Écran patient (WebSocket)
+    last_screen = session.exec(select(ScreenEvent).order_by(ScreenEvent.id.desc())).first()
+    screen = {
+        "ok": _screen_online,
+        "online": _screen_online,
+        "detail": "en ligne" if _screen_online else "HORS LIGNE",
+    }
+    if last_screen:
+        screen["last_event"] = last_screen.event
+        screen["last_event_at"] = last_screen.occurred_at.isoformat()
+
+    # Dernier appel vidéo lancé (informationnel — on ne peut pas prouver
+    # côté serveur que l'image et le son sont réellement passés)
+    last_call = session.exec(select(VideoCall).order_by(VideoCall.id.desc())).first()
+    video_call = {"ok": None, "detail": "aucun appel enregistré"}
+    if last_call:
+        age_h = round((datetime.utcnow() - last_call.started_at).total_seconds() / 3600, 1)
+        video_call = {
+            "ok": None,
+            "at": last_call.started_at.isoformat(),
+            "url": last_call.url,
+            "source": last_call.source,
+            "detail": f"il y a {age_h} h ({'alerte chute' if last_call.source == 'fall_alert' else 'manuel'})",
+        }
+
+    checks = {
+        "backend": {"ok": True, "detail": "opérationnel"},
+        "database": db,
+        "screen": screen,
+        "home_assistant": await _health_ha(settings),
+        "jitsi": await _health_jitsi(settings),
+        "backup": _health_backup(),
+        "last_video_call": video_call,
+    }
+    degraded = any(c.get("ok") is False for c in checks.values())
+    return {
+        "status": "degraded" if degraded else "ok",
+        "time": datetime.now().isoformat(),
+        "checks": checks,
+    }
 
 
 # ── Upload photo ───────────────────────────────────────────────────────────────

@@ -50,14 +50,11 @@ l'auto-hébergement (option A) est recommandé.
 ## Côté kiosque : autoriser caméra/micro sans question
 
 Chromium demande normalement l'autorisation caméra/micro — une question à
-laquelle la personne ne doit jamais avoir à répondre. Lancez le kiosque avec :
+laquelle la personne ne doit jamais avoir à répondre. Le lancement complet
+du kiosque (tous les flags, attente du serveur, redémarrage auto) est
+fourni clé en main dans **`deploy/kiosk/`** — suivez son README.
 
-```bash
-chromium --kiosk --noerrdialogs --disable-infobars \
-  --autoplay-policy=no-user-gesture-required \
-  --use-fake-ui-for-media-stream \
-  http://IP-SERVEUR:3000/display
-```
+Flags essentiels pour les appels et le réveil :
 
 - `--use-fake-ui-for-media-stream` : accepte automatiquement caméra + micro
   (pas de popup). Alternative plus fine : dans Chromium, ouvrir une fois le
@@ -73,3 +70,30 @@ chromium --kiosk --noerrdialogs --disable-infobars \
 4. Admin → « Raccrocher » (fin d'appel) → l'écran revient au dashboard.
 5. Refaites le test **depuis la 4G** (hors du réseau local) : c'est le cas
    réel des vacances.
+
+## Diagnostic « les appels ne passent pas » (ordre des causes les plus probables)
+
+Avant tout, ouvrez **Admin → Alertes → 🩺 État du système** : la ligne
+« Serveur d'appels (Jitsi) » doit être 🟢 avec votre URL auto-hébergée.
+
+1. **`jitsi_url` restée sur meet.jit.si** dans l'admin → appels bloqués
+   « en attente de l'organisateur ». Vérifiez l'URL affichée dans la carte
+   santé (10 secondes).
+2. **`JVB_ADVERTISE_IPS` incorrect** dans le `.env` du serveur Jitsi : il doit
+   contenir l'IP **locale du LXC Jitsi** et l'**IP publique de la box**.
+   Symptôme exact : la connexion s'établit mais **ni image ni son**.
+   Vérifier :
+   `grep JVB_ADVERTISE_IPS deploy/jitsi/.env`, corriger, puis
+   `docker compose up -d` dans ce dossier.
+3. **NAT port 10000/UDP** non redirigé vers le LXC Jitsi (ou hairpin NAT
+   absent pour les tests depuis le LAN). Test : `docker compose logs jvb`
+   sur le LXC pendant un appel 4G — si aucune ligne n'arrive, le flux vidéo
+   n'atteint jamais le serveur.
+4. **Kiosque sans `--use-fake-ui-for-media-stream`** : la popup caméra bloque
+   l'entrée en conférence. Réglé une fois pour toutes par `deploy/kiosk/`.
+5. **IP publique de la box changeante** (DHCP opérateur) : `JVB_ADVERTISE_IPS`
+   devient faux silencieusement. Si l'IP n'est pas fixe, prévoir un DynDNS +
+   un script qui met à jour le `.env` (ou demander une IP fixe à l'opérateur).
+
+Test décisif final : `https://meet.votre-domaine/test123` depuis un
+téléphone **en 4G** + un PC local : image + son dans les deux sens.

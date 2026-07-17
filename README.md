@@ -104,18 +104,12 @@ Accès depuis votre réseau local :
 
 Un laptop branché à un écran dans la chambre est parfait. Aucun matériel neuf à acheter.
 
-```bash
-# Lancer Chrome en mode kiosque au démarrage
-chromium --kiosk --noerrdialogs --disable-infobars http://[ip-serveur]:3000/display
-```
+Le démarrage automatique du kiosque (attente du serveur, flags « zéro
+manipulation », redémarrage automatique de Chromium, autologin sans mot de
+passe) est fourni clé en main dans **`deploy/kiosk/`** — suivez son README.
 
-Pour éviter la mise en veille de l'écran, créer `/etc/xdg/autostart/snoozolene.desktop` :
-```ini
-[Desktop Entry]
-Type=Application
-Name=Snoozolène
-Exec=chromium-browser --kiosk --noerrdialogs http://[ip-serveur]:3000/display
-```
+Pour éviter la mise en veille de l'écran : l'app acquiert un Screen Wake Lock
+automatiquement ; vérifiez aussi les réglages d'économie d'énergie du PC.
 
 ---
 

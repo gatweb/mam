@@ -82,6 +82,23 @@
 
 	let toast = $state('');
 	let activeTab = $state('message');
+	// État du système (endpoint /api/health) — carte de diagnostic à distance
+	let health = $state<any>(null);
+
+	async function loadHealth() {
+		try {
+			const res = await fetch(`${API}/api/health`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
+			health = await res.json();
+		} catch {
+			health = { status: 'degraded', checks: {}, error: true };
+		}
+	}
+
+	// Pastille de statut : true → 🟢, false → 🔴, null (non configuré) → ⚪
+	function healthDot(ok: boolean | null | undefined): string {
+		return ok === true ? '🟢' : ok === false ? '🔴' : '⚪';
+	}
 
 	async function load() {
 		const [h, f, e, p, st, ha, ph, msgs, audios] = await Promise.all([
@@ -104,6 +121,7 @@
 		photos = ph;
 		dailyMessages = msgs;
 		fallbackAudios = audios;
+		loadHealth();
 	}
 
 	// ── Sons de secours du réveil (joués si le flux radio échoue) ─────────
@@ -1067,6 +1085,35 @@
 
 	{#if activeTab === 'notifs'}
 		<section class="card">
+			<h2>🩺 État du système</h2>
+			<p class="hint">
+				Vue d'ensemble pour repérer d'un coup d'œil ce qui est cassé, même à distance.
+				⚪ = fonction non configurée (normal si vous ne l'utilisez pas).
+			</p>
+			{#if health && !health.error}
+				{#if health.status === 'degraded'}
+					<p class="health-banner health-ko">⚠️ Au moins un problème est détecté — voir les lignes rouges ci-dessous.</p>
+				{:else}
+					<p class="health-banner health-ok">✅ Tout fonctionne.</p>
+				{/if}
+				<ul class="health-list">
+					<li><span>{healthDot(health.checks.screen?.ok)}</span><strong>Écran patient</strong><em>{health.checks.screen?.detail}</em></li>
+					<li><span>{healthDot(health.checks.jitsi?.ok)}</span><strong>Serveur d'appels (Jitsi)</strong><em>{health.checks.jitsi?.url} — {health.checks.jitsi?.detail}</em></li>
+					<li><span>{healthDot(health.checks.backup?.ok)}</span><strong>Sauvegarde nocturne</strong><em>{health.checks.backup?.detail}</em></li>
+					<li><span>{healthDot(health.checks.home_assistant?.ok)}</span><strong>Home Assistant</strong><em>{health.checks.home_assistant?.detail}</em></li>
+					<li><span>{healthDot(health.checks.database?.ok)}</span><strong>Base de données</strong><em>{health.checks.database?.detail}</em></li>
+					<li><span>{healthDot(health.checks.last_video_call?.ok)}</span><strong>Dernier appel vidéo lancé</strong><em>{health.checks.last_video_call?.detail}</em></li>
+				</ul>
+				<button class="btn-test" onclick={loadHealth}>↻ Actualiser</button>
+			{:else if health?.error}
+				<p class="health-banner health-ko">🔴 Impossible de joindre le backend (<code>/api/health</code>).</p>
+				<button class="btn-test" onclick={loadHealth}>↻ Réessayer</button>
+			{:else}
+				<p class="empty">Vérification en cours…</p>
+			{/if}
+		</section>
+
+		<section class="card">
 			<h2>Notifications sur votre téléphone</h2>
 			<p class="hint">
 				Utilisez <strong>ntfy</strong> pour recevoir des alertes push gratuitement.
@@ -1824,6 +1871,37 @@
 		padding: 0.2rem 0.6rem;
 		border-radius: 1rem;
 		white-space: nowrap;
+	}
+
+	/* Carte « État du système » (diagnostic à distance) */
+	.health-banner {
+		font-weight: 700;
+		padding: 0.5rem 0.75rem;
+		border-radius: 0.5rem;
+		margin: 0 0 0.75rem;
+	}
+	.health-ok { background: #e8f7ee; color: #1e7e3c; }
+	.health-ko { background: #fdeaea; color: #b3261e; }
+	.health-list {
+		list-style: none;
+		padding: 0;
+		margin: 0 0 0.75rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.4rem;
+	}
+	.health-list li {
+		display: flex;
+		align-items: baseline;
+		gap: 0.5rem;
+		font-size: 0.95rem;
+	}
+	.health-list li strong { min-width: 190px; flex-shrink: 0; }
+	.health-list li em {
+		font-style: normal;
+		color: #666;
+		font-size: 0.85rem;
+		word-break: break-word;
 	}
 
 	hr { border: none; border-top: 1px solid #eee; margin: 0.75rem 0; }

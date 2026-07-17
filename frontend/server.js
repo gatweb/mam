@@ -13,9 +13,20 @@ const proxy = httpProxy.createProxyServer({
 
 proxy.on('error', (err, _req, res) => {
 	console.error('[proxy] error:', err.message);
-	if (res && !res.headersSent) {
-		res.writeHead(502, { 'Content-Type': 'application/json' });
-		res.end(JSON.stringify({ detail: 'Backend injoignable' }));
+	// ⚠️ res est un ServerResponse pour les requêtes HTTP classiques, mais un
+	// simple socket pour les upgrades WebSocket (/ws). Appeler writeHead sur un
+	// socket lève TypeError et TUE le processus — c'est ce qui figeait l'écran
+	// quand le backend n'était pas encore prêt au démarrage (incident des
+	// reboots nocturnes de juillet 2026).
+	if (res && typeof res.writeHead === 'function') {
+		if (!res.headersSent) {
+			res.writeHead(502, { 'Content-Type': 'application/json' });
+			res.end(JSON.stringify({ detail: 'Backend injoignable' }));
+		}
+	} else if (res && typeof res.end === 'function') {
+		// Upgrade WebSocket : impossible de répondre du HTTP — on ferme le
+		// socket proprement ; le navigateur réessaiera (reconnexion auto 3 s).
+		try { res.end(); } catch { /* socket déjà mort */ }
 	}
 });
 

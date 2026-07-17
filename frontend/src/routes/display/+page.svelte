@@ -19,6 +19,11 @@
 	let alarmTime = $state('');
 	let alarmAudio: HTMLAudioElement | null = null;
 	let audioFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+	// Passe à true au premier chargement réussi de /api/display. Tant qu'il est
+	// faux, l'écran affiche « Je me prépare… » et réessaie en boucle : plus
+	// jamais d'écran blanc si le kiosque démarre avant le serveur (incident
+	// des reboots nocturnes de juillet 2026).
+	let booted = $state(false);
 
 	let clockInterval: ReturnType<typeof setInterval>;
 	let faqInterval: ReturnType<typeof setInterval>;
@@ -40,10 +45,17 @@
 	async function fetchState() {
 		try {
 			const res = await fetch(`${API}/api/display`);
+			if (!res.ok) throw new Error(`HTTP ${res.status}`);
 			const data = await res.json();
 			displayState.set(data);
+			booted = true;
 		} catch (e) {
-			// keep last known state
+			// Tant que l'écran n'a JAMAIS réussi à charger, réessayer sans fin :
+			// le serveur est peut-être encore en train de démarrer. (Pas de
+			// location.reload() : si le serveur est éteint, le navigateur
+			// afficherait sa propre page d'erreur figée — pire que notre écran
+			// d'attente.) Après un premier succès, on garde le dernier état connu.
+			if (!booted) setTimeout(fetchState, 5000);
 		}
 	}
 
@@ -52,6 +64,11 @@
 			? API.replace(/^http/, 'ws') + '/ws'
 			: `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/ws`;
 		ws = new WebSocket(wsUrl);
+		ws.onopen = () => {
+			// Le serveur (re)vient : recharger l'état immédiatement, sans
+			// attendre un éventuel message « refresh ».
+			fetchState();
+		};
 		ws.onmessage = (e) => {
 			const msg = JSON.parse(e.data);
 			if (msg.type === 'refresh') fetchState();
@@ -255,12 +272,18 @@
 
 <main class="screen {moment} {season}" class:night={isNight}>
 
-	<!-- Icône météo en filigrane -->
-	{#if todayWeather && !isNight}
-		<div class="weather-watermark">{todayWeather.icon}</div>
-	{/if}
+	{#if !booted}
+		<!-- ══════════════ DÉMARRAGE : en attente du serveur ══════════════
+		     Affiché tant que /api/display n'a pas répondu une première fois.
+		     Message doux et apaisant (règle n°1 : zéro angoisse côté patient),
+		     l'heure reste visible — l'écran n'est jamais blanc ni vide. -->
+		<div class="boot-screen">
+			<div class="boot-time">{formatTime(now)}</div>
+			<p class="boot-msg">Je me prépare…</p>
+			<p class="boot-sub">Tout va bien, l'écran arrive.</p>
+		</div>
 
-	{#if isNight}
+	{:else if isNight}
 		<!-- ══════════════ MODE NUIT ══════════════ -->
 		<div class="night-screen">
 			<div class="night-clock">{formatTime(now)}</div>
@@ -272,6 +295,11 @@
 
 	{:else}
 		<!-- ══════════════ MODE JOUR ══════════════ -->
+
+		<!-- Icône météo en filigrane -->
+		{#if todayWeather}
+			<div class="weather-watermark">{todayWeather.icon}</div>
+		{/if}
 
 		<!-- ZONE TOP : anniversaires + météo (une seule ligne de grille) -->
 		<header class="top-zone">
@@ -988,6 +1016,49 @@
 		color: #86efac;
 		margin: 0;
 		line-height: 1.4;
+	}
+
+	/* ── ÉCRAN DE DÉMARRAGE (« Je me prépare… ») ──────────── */
+	.boot-screen {
+		height: 100vh;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		gap: 1rem;
+		text-align: center;
+		padding: 2rem;
+		box-sizing: border-box;
+	}
+
+	.boot-time {
+		font-family: 'Playfair Display', serif;
+		font-size: clamp(5rem, 16vw, 12rem);
+		font-weight: 700;
+		color: #ffd700;
+		line-height: 1;
+		letter-spacing: -0.02em;
+	}
+
+	.boot-msg {
+		font-family: 'Quicksand', 'Nunito', system-ui, sans-serif;
+		font-size: clamp(1.6rem, 3.5vw, 2.6rem);
+		font-weight: 600;
+		color: #a0c4ff;
+		margin: 0.5rem 0 0;
+		animation: boot-pulse 2.5s ease-in-out infinite;
+	}
+
+	.boot-sub {
+		font-size: clamp(1rem, 2vw, 1.5rem);
+		color: rgba(148, 163, 184, 0.6);
+		font-weight: 600;
+		margin: 0;
+	}
+
+	@keyframes boot-pulse {
+		0%, 100% { opacity: 0.55; }
+		50% { opacity: 1; }
 	}
 
 	/* ── MODE NUIT ────────────────────────────────────────── */

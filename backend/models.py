@@ -131,3 +131,14 @@ class ScreenEvent(SQLModel, table=True):
     id: Optional[int] = Field(default=None, primary_key=True)
     event: str  # "connected" | "disconnected"
     occurred_at: datetime = Field(default_factory=datetime.utcnow)
+
+
+class VideoCall(SQLModel, table=True):
+    """Trace des appels vidéo lancés — sert au diagnostic à distance
+    (carte « État du système » : dernier appel, URL utilisée…)."""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    room: str
+    url: str
+    person_name: Optional[str] = None
+    source: str = "manual"  # "manual" (admin) | "fall_alert" (automatisation HA)
+    started_at: datetime = Field(default_factory=datetime.utcnow)
