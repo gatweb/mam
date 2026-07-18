@@ -76,6 +76,28 @@ Flags essentiels pour les appels et le réveil :
 Avant tout, ouvrez **Admin → Alertes → 🩺 État du système** : la ligne
 « Serveur d'appels (Jitsi) » doit être 🟢 avec votre URL auto-hébergée.
 
+0. **`config.prejoinConfig.enabled` dans l'URL de l'iframe** *(cause confirmée
+   le 18 juillet 2026, corrigée dans le code)* : les Jitsi récents répondent à
+   ce paramètre URL par `disableInitialGUM=true` → l'écran rejoignait **sans
+   caméra ni micro** : la conférence s'ouvrait (minuteur, participants
+   visibles) mais aucun média ne circulait, puis Jitsi affichait sa page
+   d'erreur « Malheureusement, un problème est survenu — Reconnexion dans N
+   secondes… » en boucle. Le prejoin reste désactivé côté serveur
+   (`config.js`) — le paramètre URL était donc inutile ET toxique. Validé par
+   sonde 2-clients : sans le paramètre, 4 pistes et vidéo distante OK via le
+   pont. **Ne jamais réintroduire ce paramètre dans l'URL.**
+
+0bis. **La page display servie en HTTP simple → « WebRTC is not available »**
+   *(cause racine historique, confirmée le 18 juillet 2026)* : Chrome exige
+   un **contexte sécurisé** pour `getUserMedia` — y compris dans une iframe
+   HTTPS quand la page mère est en `http://IP-locale:3000`. L'iframe Jitsi
+   était alors redirigée vers `static/webrtcUnsupported.html` et aucun appel
+   n'a jamais pu aboutir depuis le kiosque. Correctif : le flag
+   `--unsafely-treat-insecure-origin-as-secure=http://IP:3000` dans
+   `deploy/kiosk/kiosk-launch.sh` (automatique, dérivé de SNOOZ_URL).
+   Reproduit sans le flag (iframe → webrtcUnsupported) puis validé avec
+   (pistes caméra/micro créées dans l'iframe). Alternative : servir l'écran
+   en HTTPS via le reverse proxy.
 1. **`jitsi_url` restée sur meet.jit.si** dans l'admin → appels bloqués
    « en attente de l'organisateur ». Vérifiez l'URL affichée dans la carte
    santé (10 secondes).

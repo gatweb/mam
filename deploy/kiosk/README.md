@@ -16,11 +16,17 @@ Le correctif tient en 3 couches :
 
 ## Installation (une fois, sur le PC kiosque)
 
+> **Sans git sur le kiosque** : copiez les deux fichiers depuis une machine
+> qui a le dépôt, ex. `scp deploy/kiosk/kiosk-launch.sh
+> deploy/kiosk/snoozolene-kiosk.service agnes@IP-DU-KIOSQUE:~/` puis
+> déplacez-les comme ci-dessous.
+
 ```bash
 # 1. Copier les fichiers
 mkdir -p ~/.local/bin ~/.config/systemd/user
 cp kiosk-launch.sh ~/.local/bin/snoozolene-kiosk.sh
-chmod +x ~/.local/bin/snoozolene-kiosk.sh
+cp kiosk-display.sh ~/.local/bin/snoozolene-display.sh
+chmod +x ~/.local/bin/snoozolene-kiosk.sh ~/.local/bin/snoozolene-display.sh
 cp snoozolene-kiosk.service ~/.config/systemd/user/
 
 # 2. Adapter l'URL du serveur dans le service
@@ -72,6 +78,21 @@ supprime définitivement : Chromium n'utilise plus le trousseau. Aucune autre
 action nécessaire — en particulier, ne laissez jamais Agnès taper quoi que
 ce soit : si une demande de mot de passe réapparaît, c'est un bug à signaler.
 
+## Laptop + grand écran externe
+
+Le script `snoozolene-display.sh` (lancé automatiquement avant Chromium)
+bascule l'écran externe (HDMI/DP) en principal et éteint l'écran interne du
+laptop — sinon GNOME ouvre le kiosque sur le mauvais écran. Pour garder
+l'écran interne allumé, ajouter `Environment=KIOSK_KEEP_INTERNAL=1` dans le
+service.
+
+Si le laptop tourne **capot fermé**, éviter la mise en veille à la fermeture :
+
+```bash
+sudo sed -i 's/^#\?HandleLidSwitch=.*/HandleLidSwitch=ignore/' /etc/systemd/logind.conf
+sudo systemctl restart systemd-logind   # ⚠️ ferme la session en cours
+```
+
 ## Wayland (si la session n'est pas X11)
 
 Le service suppose une session X11 (`DISPLAY=:0`). Pour vérifier :
@@ -83,6 +104,56 @@ echo $XDG_SESSION_TYPE     # « x11 » → rien à faire ; « wayland » → lir
 Sous Wayland : retirer les deux lignes `Environment=DISPLAY/XAUTHORITY` du
 service et ajouter `--ozone-platform=wayland` aux flags Chromium dans
 `snoozolene-kiosk.sh`.
+
+## ⚠️ Chromium en paquet snap (Ubuntu, Zorin OS…) — « WebRTC is not available »
+
+Si `ps` montre `/snap/chromium/.../chrome`, le navigateur est un **snap**.
+C'est une source de pannes pour un kiosque 24/7 :
+
+- **Confinement** : sans les interfaces `camera` / `audio-record` connectées,
+  les appels vidéo échouent avec la page Jitsi *« WebRTC is not available in
+  your browser »*. Vérifier : `snap connections chromium | grep -E 'camera|audio-record'`.
+- **Auto-refresh** : snap met à jour Chromium tout seul, à n'importe quelle
+  heure — le kiosque peut fonctionner le soir et être cassé au matin sans
+  aucune intervention humaine.
+
+**Solution recommandée : Google Chrome en .deb** (WebRTC complet, pas de
+confinement, mises à jour via apt au rythme du système) :
+
+```bash
+wget https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+sudo apt install -y ./google-chrome-stable_current_amd64.deb
+```
+
+Puis dans `~/.config/systemd/user/snoozolene-kiosk.service`, ajouter sous
+`Environment=SNOOZ_URL=…` :
+
+```ini
+Environment=CHROMIUM_BIN=google-chrome-stable
+```
+
+et `systemctl --user daemon-reload && systemctl --user restart snoozolene-kiosk`.
+
+Si vous devez rester sur le snap : connecter les interfaces
+(`sudo snap connect chromium:camera && sudo snap connect chromium:audio-record`)
+et geler les mises à jour (`sudo snap refresh --hold chromium`).
+
+## Popups parasites à supprimer sur le kiosque
+
+Règle n°1 : rien ne doit jamais s'afficher par-dessus l'écran. Sur un Ubuntu/
+Zorin standard, désactiver pour la session kiosque :
+
+```bash
+# Notifications de mises à jour et packs de langue (le popup « pack »)
+sudo apt remove -y update-notifier
+# Désactiver le démarrage auto de gnome-software et des rapports d'erreurs
+mkdir -p ~/.config/autostart
+printf '[Desktop Entry]\nHidden=true\n' > ~/.config/autostart/gnome-software-service.desktop
+sudo systemctl disable --now apport.service 2>/dev/null
+```
+
+`unclutter` (cache le curseur après quelques secondes d'inactivité) est en
+revanche utile : le garder.
 
 ## Redémarrage nocturne (le cron de 2 h)
 

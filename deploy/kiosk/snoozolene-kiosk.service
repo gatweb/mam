@@ -22,6 +22,9 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
 # Le script attend que le serveur réponde 200 AVANT de lancer Chromium :
 # plus jamais d'écran blanc figé au démarrage.
+# Le script d'affichage (avant) bascule le grand écran externe en principal
+# et éteint l'écran interne du laptop (sinon Chromium s'y ouvre).
+ExecStartPre=%h/.local/bin/snoozolene-display.sh
 ExecStart=%h/.local/bin/snoozolene-kiosk.sh
 # Si Chromium meurt ou est tué (reboot brutal, crash), il revient tout seul.
 Restart=always

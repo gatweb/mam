@@ -247,14 +247,17 @@
 
 	// URL Jitsi côté patient : rejoint la réunion AUTOMATIQUEMENT —
 	// pas d'écran « Rejoindre », pas de lobby, micro et caméra actifs.
-	// prejoinConfig.enabled est le paramètre actuel ; prejoinPageEnabled est
-	// gardé pour compatibilité avec les anciennes versions auto-hébergées.
+	// ⚠️ NE JAMAIS passer config.prejoinConfig.enabled dans l'URL : les Jitsi
+	// récents y répondent par disableInitialGUM=true → l'écran rejoindrait
+	// SANS caméra NI micro (appel muet et aveugle — incident de juillet 2026).
+	// Le prejoin est désactivé côté serveur (config.js du Jitsi auto-hébergé) ;
+	// prejoinPageEnabled (legacy) est gardé pour les anciennes versions, il est
+	// ignoré par les récentes et ne déclenche pas disableInitialGUM.
 	function jitsiSrc(call: { room: string; url: string | null }): string {
 		const base = call.url ?? `https://meet.jit.si/${call.room}`;
 		const name = $displayState?.recipient?.first_name ?? 'Écran';
 		return base
-			+ '#config.prejoinConfig.enabled=false'
-			+ '&config.prejoinPageEnabled=false'
+			+ '#config.prejoinPageEnabled=false'
 			+ '&config.startWithVideoMuted=false'
 			+ '&config.startWithAudioMuted=false'
 			+ '&config.disableDeepLinking=true'
