@@ -24,7 +24,9 @@ Environment=XAUTHORITY=%h/.Xauthority
 # plus jamais d'écran blanc figé au démarrage.
 # Le script d'affichage (avant) bascule le grand écran externe en principal
 # et éteint l'écran interne du laptop (sinon Chromium s'y ouvre).
-ExecStartPre=%h/.local/bin/snoozolene-display.sh
+# Le « - » en tête = OPTIONNEL : si le script est absent ou échoue, on lance
+# quand même le kiosque (sans lui, le service entier refusait de démarrer).
+ExecStartPre=-%h/.local/bin/snoozolene-display.sh
 ExecStart=%h/.local/bin/snoozolene-kiosk.sh
 # Si Chromium meurt ou est tué (reboot brutal, crash), il revient tout seul.
 Restart=always

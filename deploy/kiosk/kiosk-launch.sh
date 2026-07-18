@@ -50,9 +50,15 @@ fi
 #    n'est pas gérée et reste GRISE figée (constaté sur le terrain : 1er
 #    lancement gris, le 2e — après redémarrage du service — parfait).
 #    (Wayland : pas de xset — on saute si WAYLAND_DISPLAY est défini.)
-if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+# Attente BORNÉE (2 min max) et seulement si xset existe : si l'outil manque
+# ou que X ne vient pas, on tente quand même — l'app a son propre écran
+# d'attente, et systemd relancera. Un kiosque ne doit jamais bloquer sans fin.
+if [ -z "${WAYLAND_DISPLAY:-}" ] && command -v xset > /dev/null; then
     echo "[kiosk] attente de la session graphique (DISPLAY=${DISPLAY:-:0}) …"
-    until xset q > /dev/null 2>&1; do sleep 2; done
+    for _ in $(seq 1 60); do
+        xset q > /dev/null 2>&1 && break
+        sleep 2
+    done
 fi
 echo "[kiosk] attente du gestionnaire de fenêtres…"
 for _ in $(seq 1 60); do
